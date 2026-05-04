@@ -4,6 +4,8 @@ import {
   buildConversationThread,
   buildThreadListRows,
   getDefaultExpandedMessageIds,
+  getReadingTimelineMessages,
+  scrollReadingTimelineToBottom,
   stripQuotedHtml,
   threadRowMatchesFilters,
 } from "./threadView";
@@ -126,6 +128,39 @@ describe("getDefaultExpandedMessageIds", () => {
     ];
 
     expect(getDefaultExpandedMessageIds(messages)).toEqual(["msg-3", "msg-2"]);
+  });
+});
+
+describe("getReadingTimelineMessages", () => {
+  it("renders conversation messages oldest first so the newest is at the bottom", () => {
+    const newest = makeEmail("msg-3", {
+      timestamp: new Date("2026-05-03T10:00:00Z"),
+    });
+    const middle = makeEmail("msg-2", {
+      timestamp: new Date("2026-05-02T10:00:00Z"),
+    });
+    const oldest = makeEmail("msg-1", {
+      timestamp: new Date("2026-05-01T10:00:00Z"),
+    });
+
+    expect(
+      getReadingTimelineMessages([newest, oldest, middle]).map(
+        (item) => item.id,
+      ),
+    ).toEqual(["msg-1", "msg-2", "msg-3"]);
+  });
+});
+
+describe("scrollReadingTimelineToBottom", () => {
+  it("moves the scroll container to the newest message at the bottom", () => {
+    const scrollContainer = {
+      scrollTop: 0,
+      scrollHeight: 1400,
+    };
+
+    scrollReadingTimelineToBottom(scrollContainer);
+
+    expect(scrollContainer.scrollTop).toBe(1400);
   });
 });
 

@@ -165,12 +165,16 @@ function MessageRow({
         isSelected ? "bg-[var(--bg-2)]" : "hover:bg-[var(--bg-1)]",
       )}
       style={{
-        paddingLeft: row.hasUnread || isSelected ? "14px" : "16px",
-        borderLeft: row.hasUnread || isSelected
+        paddingLeft: isSelected ? "14px" : row.hasUnread ? "24px" : "16px",
+        borderLeft: isSelected
           ? "2px solid var(--ryze-accent)"
           : "2px solid transparent",
       }}
     >
+      {row.hasUnread && !isSelected && (
+        <span className="absolute left-3 top-7 h-1.5 w-1.5 rounded-full bg-[var(--ryze-accent)] shadow-[0_0_0_2px_var(--bg-0)]" />
+      )}
+
       <div
         className={cn(
           "absolute left-0 top-1/2 flex w-8 -translate-y-1/2 items-center justify-center transition-all duration-150",
@@ -216,15 +220,12 @@ function MessageRow({
                 {email.sender.initials}
               </div>
             )}
-            {row.hasUnread && !showAvatars && (
-              <div className="h-1.5 w-1.5 shrink-0 rounded-[2px] bg-[var(--ryze-accent)]" />
-            )}
             <span
               className={cn(
                 "truncate text-[13.5px]",
                 row.hasUnread
-                  ? "font-semibold text-[var(--fg-0)]"
-                  : "font-medium text-[var(--fg-1)]",
+                  ? "font-bold text-[var(--fg-0)]"
+                  : "font-medium text-[var(--fg-2)]",
                 isSelected && "text-[var(--fg-0)]",
               )}
             >
@@ -254,7 +255,10 @@ function MessageRow({
             )}
             <span
               className={cn(
-                "font-mono-jetbrains text-[10.5px] text-[var(--fg-2)]",
+                "font-mono-jetbrains text-[10.5px]",
+                row.hasUnread
+                  ? "font-medium text-[var(--fg-1)]"
+                  : "text-[var(--fg-3)]",
                 isSelected && "text-[var(--fg-1)]",
               )}
             >
@@ -267,8 +271,8 @@ function MessageRow({
           className={cn(
             "mb-0.5 truncate text-[13px]",
             row.hasUnread
-              ? "font-medium text-[var(--fg-0)]"
-              : "text-[var(--fg-1)]",
+              ? "font-semibold text-[var(--fg-0)]"
+              : "font-normal text-[var(--fg-2)]",
             isSelected && "text-[var(--fg-0)]",
           )}
         >
@@ -278,7 +282,8 @@ function MessageRow({
         {showPreviewText && (
           <div
             className={cn(
-              "truncate text-[12.5px] leading-relaxed text-[var(--fg-2)]",
+              "truncate text-[12.5px] leading-relaxed",
+              row.hasUnread ? "text-[var(--fg-1)]" : "text-[var(--fg-3)]",
               isSelected && "text-[var(--fg-1)]",
             )}
           >

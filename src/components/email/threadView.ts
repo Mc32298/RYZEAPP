@@ -163,6 +163,19 @@ export function getDefaultExpandedMessageIds(messages: EmailThread[]) {
   return messages.slice(0, 2).map((item) => item.id);
 }
 
+export function getReadingTimelineMessages(messages: EmailThread[]) {
+  return [...messages].sort(
+    (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
+  );
+}
+
+export function scrollReadingTimelineToBottom(
+  scrollContainer: Pick<HTMLElement, "scrollTop" | "scrollHeight"> | null,
+) {
+  if (!scrollContainer) return;
+  scrollContainer.scrollTop = scrollContainer.scrollHeight;
+}
+
 export function stripQuotedHtml(html: string): TrimmedMessageBody {
   const blockquoteMatch = html.match(/<blockquote[\s\S]*<\/blockquote>/i);
 

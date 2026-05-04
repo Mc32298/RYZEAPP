@@ -14,12 +14,23 @@ import {
   threadRowMatchesFilters,
 } from "./threadView";
 import {
+  buildInlineReplyHtml,
+  buildReplySubject,
+  getReplyRecipients,
+} from "./replyComposer";
+import {
+  applyMovedEmailState,
+  getKnownFolderIdForAccount,
+  getMailboxRefreshFolderIds,
+} from "./mailboxMutation";
+import {
   Sparkles,
   ArrowRight,
   CheckCircle2,
   Forward,
   MessageSquare,
   Reply,
+  Search,
   Settings2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -48,7 +59,7 @@ import { toast } from "sonner";
 
 const SETTINGS_STORAGE_KEY = "email-client-settings";
 const ACCOUNTS_STORAGE_KEY = "email-client-accounts";
-const PROFILE_COLORS = ["#C9A84C", "#A9793D", "#5F7A52", "#B85A50", "#7C6546"];
+const PROFILE_COLORS = ["#A8C7A2", "#C7AE79", "#8B6F5A", "#7E9181", "#B57865"];
 
 function loadStoredSettings(): EmailSettings {
   if (typeof window === "undefined") {
@@ -524,7 +535,7 @@ export function EmailClient() {
     DEFAULT_PRIMARY_ACCOUNT;
 
   const themeAttribute = getThemeAttribute(settings);
-  const isAppDarkMode = themeAttribute !== "lightGold";
+  const isAppDarkMode = themeAttribute !== "lightGold" && themeAttribute !== "appleLight";
   const syncCutoff = getSyncCutoff(settings.syncWindow);
   const autoDeleteCutoff = getAutoDeleteCutoff(settings.autoDeleteTrash);
 
@@ -532,6 +543,11 @@ export function EmailClient() {
     const timer = setTimeout(() => setIsAppLoaded(true), 100);
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.documentElement.dataset.theme = themeAttribute;
+  }, [themeAttribute]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1313,49 +1329,98 @@ export function EmailClient() {
     [selectedEmailId],
   );
 
+  const moveEmailToFolderAndRefresh = useCallback(
+    async (email: EmailThread, destinationFolderId: string) => {
+      if (!window.electronAPI?.moveMicrosoftEmailToFolder) {
+        throw new Error(
+          "Move email API is not available. Fully restart Electron.",
+        );
+      }
+
+      const accountId = email.accountId || currentAccount.id;
+      const sourceFolderId = email.folderId || email.folder;
+
+      const result = await window.electronAPI.moveMicrosoftEmailToFolder({
+        accountId,
+        messageId: email.messageId,
+        destinationFolderId,
+      });
+
+      setEmails((prev) =>
+        prev.map((item) =>
+          item.id === email.id || item.messageId === email.messageId
+            ? applyMovedEmailState(item, {
+                destinationFolderId,
+                messageId: result.messageId,
+              })
+            : item,
+        ),
+      );
+
+      try {
+        await window.electronAPI.syncMicrosoftFolders?.(
+          accountId,
+          getMailboxRefreshFolderIds(sourceFolderId, destinationFolderId),
+        );
+      } catch (error) {
+        console.error("Post-move folder sync failed:", error);
+      }
+
+      await silentlyRefreshMailboxUI();
+      return result;
+    },
+    [currentAccount.id, silentlyRefreshMailboxUI],
+  );
+
   const handleArchive = useCallback(
     async (id: string) => {
       const emailToArchive = emails.find((email) => email.id === id);
       if (!emailToArchive) return;
+      const previousEmails = emails;
+      const accountId = emailToArchive.accountId || currentAccount.id;
+      const destinationFolderId = getKnownFolderIdForAccount(
+        mailFolders,
+        accountId,
+        "archive",
+      );
 
       setEmails((prev) =>
         prev.map((email) =>
           email.id === id
-            ? {
-                ...email,
-                folder: findFolderIdByKnownName(mailFolders, "archive"),
-              }
+            ? applyMovedEmailState(email, { destinationFolderId })
             : email,
         ),
       );
 
       if (selectedEmailId === id) setSelectedEmailId(null);
 
-      const realMessageId = emailToArchive.messageId;
-
-      if (window.electronAPI?.moveMicrosoftEmail && realMessageId) {
-        try {
-          await window.electronAPI.moveMicrosoftEmail(
-            emailToArchive.accountId || currentAccountId,
-            realMessageId,
-            "archive",
-          );
-        } catch (error) {
-          console.error("Failed to archive email on server", error);
-        }
+      try {
+        await moveEmailToFolderAndRefresh(emailToArchive, destinationFolderId);
+      } catch (error) {
+        console.error("Failed to archive email on server", error);
+        setEmails(previousEmails);
+        window.alert(
+          error instanceof Error ? error.message : "Failed to archive email.",
+        );
       }
     },
-    [emails, selectedEmailId, currentAccountId, mailFolders],
+    [
+      emails,
+      selectedEmailId,
+      currentAccount.id,
+      mailFolders,
+      moveEmailToFolderAndRefresh,
+    ],
   );
 
   const handleDelete = useCallback(
     async (id: string) => {
       const emailToDelete = emails.find((email) => email.id === id);
       if (!emailToDelete) return;
+      const previousEmails = emails;
 
-      const owningAccountId = emailToDelete.accountId || currentAccountId;
-
-      const destinationFolderId = findFolderIdByKnownNameForAccount(
+      const owningAccountId = emailToDelete.accountId || currentAccount.id;
+      const destinationFolderId = getKnownFolderIdForAccount(
         mailFolders,
         owningAccountId,
         "deleteditems",
@@ -1364,32 +1429,30 @@ export function EmailClient() {
       setEmails((prev) =>
         prev.map((email) =>
           email.id === id
-            ? {
-                ...email,
-                folder: destinationFolderId,
-                folderId: destinationFolderId,
-              }
+            ? applyMovedEmailState(email, { destinationFolderId })
             : email,
         ),
       );
 
       if (selectedEmailId === id) setSelectedEmailId(null);
 
-      const realMessageId = emailToDelete.messageId;
-
-      if (window.electronAPI?.moveMicrosoftEmail && realMessageId) {
-        try {
-          await window.electronAPI.moveMicrosoftEmail(
-            owningAccountId,
-            realMessageId,
-            "deleteditems",
-          );
-        } catch (error) {
-          console.error("Failed to delete email on server", error);
-        }
+      try {
+        await moveEmailToFolderAndRefresh(emailToDelete, destinationFolderId);
+      } catch (error) {
+        console.error("Failed to delete email on server", error);
+        setEmails(previousEmails);
+        window.alert(
+          error instanceof Error ? error.message : "Failed to delete email.",
+        );
       }
     },
-    [emails, selectedEmailId, currentAccountId, mailFolders],
+    [
+      emails,
+      selectedEmailId,
+      currentAccount.id,
+      mailFolders,
+      moveEmailToFolderAndRefresh,
+    ],
   );
 
   const handleCompose = useCallback(
@@ -1469,16 +1532,24 @@ export function EmailClient() {
         setEmails((prev) =>
           prev.map((email) =>
             email.id === emailId
-              ? {
-                  ...email,
-                  id: `${destinationFolderId}:${result.messageId}`,
+              ? applyMovedEmailState(email, {
+                  destinationFolderId,
                   messageId: result.messageId,
-                  folder: destinationFolderId,
-                  folderId: destinationFolderId,
-                }
+                })
               : email,
           ),
         );
+
+        try {
+          await window.electronAPI.syncMicrosoftFolders?.(
+            emailToMove.accountId || currentAccount.id,
+            getMailboxRefreshFolderIds(sourceFolderId, destinationFolderId),
+          );
+        } catch (syncError) {
+          console.error("Post-move folder sync failed:", syncError);
+        }
+
+        await silentlyRefreshMailboxUI();
 
         return true;
       } catch (error) {
@@ -1490,7 +1561,13 @@ export function EmailClient() {
         return false;
       }
     },
-    [activeFolder, currentAccount.id, emails, selectedEmailId],
+    [
+      activeFolder,
+      currentAccount.id,
+      emails,
+      selectedEmailId,
+      silentlyRefreshMailboxUI,
+    ],
   );
 
   const expandSelectedIds = useCallback(
@@ -1525,19 +1602,6 @@ export function EmailClient() {
     },
     [emails, expandSelectedIds, handleEmailDropToFolder],
   );
-
-  function findFolderIdByKnownNameForAccount(
-    folders: MailFolder[],
-    accountId: string,
-    knownName: string,
-  ) {
-    return (
-      folders.find(
-        (folder) =>
-          folder.accountId === accountId && folder.wellKnownName === knownName,
-      )?.id || knownName
-    );
-  }
 
   const openReplyDraft = useCallback(
     (
@@ -1704,6 +1768,35 @@ export function EmailClient() {
     [drafts, currentAccountId],
   );
 
+  const handleInlineReplySend = useCallback(
+    async (message: EmailThread, bodyText: string) => {
+      if (!window.electronAPI?.sendMicrosoftEmail) {
+        throw new Error("Send email API is not available. Fully restart Electron.");
+      }
+
+      const to = getReplyRecipients(message, currentAccount.email);
+      if (!to) {
+        throw new Error("No reply recipient found.");
+      }
+
+      await window.electronAPI.sendMicrosoftEmail({
+        accountId: message.accountId || currentAccountId,
+        to,
+        cc: "",
+        subject: buildReplySubject(message),
+        body: buildInlineReplyHtml({
+          bodyText,
+          sourceEmail: message,
+          signature: settings.signature,
+        }),
+      });
+
+      toast.success("Reply sent");
+      window.electronAPI.syncMicrosoftInbox?.(currentAccountId).catch(console.error);
+    },
+    [currentAccount.email, currentAccountId, settings.signature],
+  );
+
   const handleDraftMinimize = useCallback((id: string) => {
     setDrafts((prev) =>
       prev.map((draft) =>
@@ -1757,7 +1850,7 @@ export function EmailClient() {
         const created = await window.electronAPI.createLabel({
           accountId: currentAccount.id,
           name: trimmedName,
-          color: "#C9A84C",
+          color: "#A8C7A2",
         });
 
         setEmailLabels((prev) => {
@@ -2286,6 +2379,15 @@ export function EmailClient() {
     color: "var(--fg-0)",
     fontFamily: "var(--font-sans)",
   } as React.CSSProperties;
+  const windowDragStyle = {
+    WebkitAppRegion: "drag",
+  } as React.CSSProperties;
+  const windowNoDragStyle = {
+    WebkitAppRegion: "no-drag",
+  } as React.CSSProperties;
+  const handleCloseWindow = () => window.electronAPI?.closeWindow();
+  const handleMinimizeWindow = () => window.electronAPI?.minimizeWindow();
+  const handleMaximizeWindow = () => window.electronAPI?.maximizeWindow();
 
   return (
     <div
@@ -2323,37 +2425,88 @@ export function EmailClient() {
       />
 
       <div
-        className="grid border-b border-[var(--border-subtle)] bg-[var(--bg-1)]"
-        style={{
-          gridTemplateColumns: "var(--sidebar-w) var(--list-w) minmax(0,1fr)",
-        }}
+        className="flex min-w-0 items-center gap-4 border-b border-[var(--border-subtle)] bg-[var(--bg-1)] px-4"
+        style={windowDragStyle}
       >
-        <div className="flex items-center px-3">
-          <div className="flex items-center gap-1.5">
-            <span className="text-sm font-semibold tracking-normal text-[var(--fg-0)]">
-              RYZE
-            </span>
-            <span className="font-mono-jetbrains text-[11px] text-[var(--fg-3)]">
-              v0.4.2
-            </span>
-          </div>
+        <div
+          className="flex shrink-0 items-center gap-2"
+          style={windowNoDragStyle}
+        >
+          <button
+            onClick={handleCloseWindow}
+            className="h-3 w-3 rounded-full bg-[#ff5f57] transition-colors hover:bg-[#ff7b75]"
+            title="Close"
+          />
+          <button
+            onClick={handleMinimizeWindow}
+            className="h-3 w-3 rounded-full bg-[#febc2e] transition-colors hover:bg-[#ffd062]"
+            title="Minimize"
+          />
+          <button
+            onClick={handleMaximizeWindow}
+            className="h-3 w-3 rounded-full bg-[#28c840] transition-colors hover:bg-[#4ade5c]"
+            title="Maximize"
+          />
         </div>
-        <div className="flex items-center px-3">
+
+        <div className="flex shrink-0 items-baseline gap-1.5">
+          <span className="text-[14px] font-semibold tracking-normal text-[var(--fg-0)]">
+            RYZE
+          </span>
+          <span className="font-mono-jetbrains text-[11px] text-[var(--fg-3)]">
+            v0.4.2
+          </span>
+        </div>
+
+        <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2 font-mono-jetbrains text-[12px] text-[var(--fg-2)]">
-            <span className="truncate">
-              {currentAccount.email} / <span className="text-[var(--fg-0)]">{activeFolderLabel}</span>
+            <span className="min-w-0 truncate">{currentAccount.email}</span>
+            <span className="text-[var(--fg-3)]">/</span>
+            <span className="shrink-0 font-semibold text-[var(--fg-0)]">
+              {activeFolderLabel}
             </span>
           </div>
         </div>
-        <div className="flex min-w-0 items-center justify-end gap-2 px-3">
+
+        <div
+          className="flex min-w-0 shrink-0 items-center gap-2"
+          style={windowNoDragStyle}
+        >
+          <label className="flex h-8 w-[min(402px,34vw)] min-w-[220px] items-center gap-2 rounded-[7px] border border-[var(--border-0)] bg-[var(--bg-2)] px-3 text-[var(--fg-2)] shadow-[0_1px_0_oklch(0_0_0_/_0.24)] transition-colors focus-within:border-[var(--border-1)] focus-within:text-[var(--fg-1)]">
+            <Search size={14} />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onFocus={() => {
+                setGlobalSearchDraft(searchQuery);
+                setGlobalSearchSelectedIndex(0);
+                setIsGlobalSearchActionMenuOpen(false);
+                setGlobalSearchActionIndex(0);
+                setIsGlobalSearchOpen(true);
+              }}
+              placeholder="Search messages, addresses, attachments..."
+              className="min-w-0 flex-1 bg-transparent font-mono-jetbrains text-[12px] text-[var(--fg-1)] outline-none placeholder:text-[var(--fg-3)]"
+            />
+            <span className="flex items-center gap-1 font-mono-jetbrains text-[10px] text-[var(--fg-3)]">
+              <span className="rounded-[4px] border border-[var(--border-0)] px-1.5 py-0.5">
+                Shift
+              </span>
+              <span>+</span>
+              <span className="rounded-[4px] border border-[var(--border-0)] px-1.5 py-0.5">
+                Space
+              </span>
+            </span>
+          </label>
+
           <button className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]">
             <MessageSquare size={14} />
           </button>
           <button
             onClick={() => setIsSettingsOpen(true)}
             className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
+            title="Settings"
           >
-            <Settings2 size={14} />
+            <Settings2 size={15} />
           </button>
         </div>
       </div>
@@ -2477,6 +2630,7 @@ export function EmailClient() {
             threadMessages={selectedConversation?.messages || []}
             relatedEmails={emails}
             onReply={handleReply}
+            onInlineReplySend={handleInlineReplySend}
             onReplyWithTone={handleReplyWithTone}
             onForward={handleForward}
             onArchive={handleArchive}
@@ -2753,16 +2907,6 @@ export function EmailClient() {
         </div>
       )}
     </div>
-  );
-}
-
-function findFolderIdByKnownName(
-  mailFolders: MailFolder[],
-  knownName: string,
-): string {
-  return (
-    mailFolders.find((folder) => folder.wellKnownName === knownName)?.id ||
-    knownName
   );
 }
 

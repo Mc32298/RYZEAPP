@@ -1,6 +1,11 @@
 import { Account } from '@/types/email';
 
-export type ThemeMode = 'darkGold' | 'darkBlue' | 'lightGold';
+export type ThemeMode =
+  | 'darkGold'
+  | 'darkBlue'
+  | 'lightGold'
+  | 'appleDark'
+  | 'appleLight';
 export type DensityMode = 'comfortable' | 'compact';
 export type NotificationCadence = 'instant' | 'hourly' | 'daily';
 export type SyncWindow = '30 days' | '90 days' | '1 year';
@@ -83,11 +88,11 @@ export const DEFAULT_PRIMARY_ACCOUNT: Account = {
   name: 'No Account Connected',
   email: 'Connect Microsoft account',
   initials: 'NA',
-  color: '#A9793D',
+  color: '#A8C7A2',
   provider: 'local',
 };
 
-export const EMAIL_THEMES: Record<'darkGold' | 'darkBlue' | 'lightGold', EmailTheme> = {
+export const EMAIL_THEMES: Record<ThemeMode, EmailTheme> = {
   darkGold: {
     background: 'var(--bg-0)',
     panel: 'var(--bg-1)',
@@ -129,6 +134,46 @@ export const EMAIL_THEMES: Record<'darkGold' | 'darkBlue' | 'lightGold', EmailTh
     shadow: 'oklch(0 0 0 / 0.6)',
   },
   lightGold: {
+    background: 'var(--bg-0)',
+    panel: 'var(--bg-1)',
+    surface: 'var(--bg-2)',
+    surfaceAlt: 'var(--bg-3)',
+    border: 'var(--border-subtle)',
+    borderStrong: 'var(--border-0)',
+    hover: 'var(--bg-3)',
+    input: 'var(--bg-2)',
+    text: 'var(--fg-1)',
+    textStrong: 'var(--fg-0)',
+    textMuted: 'var(--fg-2)',
+    textDim: 'var(--fg-3)',
+    accent: 'var(--ryze-accent)',
+    accentSoft: 'var(--ryze-accent-soft)',
+    accentBorder: 'var(--ryze-accent)',
+    accentContrast: 'var(--ryze-accent-fg)',
+    danger: 'var(--danger-token)',
+    shadow: 'oklch(0 0 0 / 0.18)',
+  },
+  appleDark: {
+    background: 'var(--bg-0)',
+    panel: 'var(--bg-1)',
+    surface: 'var(--bg-2)',
+    surfaceAlt: 'var(--bg-3)',
+    border: 'var(--border-subtle)',
+    borderStrong: 'var(--border-0)',
+    hover: 'var(--bg-3)',
+    input: 'var(--bg-2)',
+    text: 'var(--fg-1)',
+    textStrong: 'var(--fg-0)',
+    textMuted: 'var(--fg-2)',
+    textDim: 'var(--fg-3)',
+    accent: 'var(--ryze-accent)',
+    accentSoft: 'var(--ryze-accent-soft)',
+    accentBorder: 'var(--ryze-accent)',
+    accentContrast: 'var(--ryze-accent-fg)',
+    danger: 'var(--danger-token)',
+    shadow: 'oklch(0 0 0 / 0.6)',
+  },
+  appleLight: {
     background: 'var(--bg-0)',
     panel: 'var(--bg-1)',
     surface: 'var(--bg-2)',

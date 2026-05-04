@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
 
 @import "tailwindcss/base";
 @import "tailwindcss/components";
@@ -49,23 +49,23 @@
 
     --sidebar-ring: 221 83% 53%;
 
-    --bg-0: oklch(0.16 0.025 248);
-    --bg-1: oklch(0.19 0.025 248);
-    --bg-2: oklch(0.23 0.023 246);
-    --bg-3: oklch(0.28 0.022 242);
-    --bg-4: oklch(0.34 0.02 236);
-    --fg-0: oklch(0.96 0.01 82);
-    --fg-1: oklch(0.83 0.012 84);
-    --fg-2: oklch(0.64 0.011 86);
-    --fg-3: oklch(0.49 0.011 90);
-    --border-0: oklch(0.31 0.02 238);
-    --border-1: oklch(0.38 0.02 232);
-    --border-subtle: oklch(0.24 0.02 246);
-    --ryze-accent: oklch(0.72 0.12 86);
-    --ryze-accent-hover: oklch(0.77 0.125 88);
-    --ryze-accent-active: oklch(0.66 0.11 84);
-    --ryze-accent-soft: oklch(0.72 0.12 86 / 0.16);
-    --ryze-accent-fg: oklch(0.19 0.02 250);
+    --bg-0: oklch(0.18 0.018 126);
+    --bg-1: oklch(0.21 0.017 126);
+    --bg-2: oklch(0.25 0.016 126);
+    --bg-3: oklch(0.3 0.018 126);
+    --bg-4: oklch(0.36 0.018 126);
+    --fg-0: oklch(0.95 0.014 98);
+    --fg-1: oklch(0.84 0.012 100);
+    --fg-2: oklch(0.66 0.012 104);
+    --fg-3: oklch(0.51 0.012 108);
+    --border-0: oklch(0.36 0.018 122);
+    --border-1: oklch(0.43 0.018 120);
+    --border-subtle: oklch(0.28 0.016 124);
+    --ryze-accent: oklch(0.78 0.07 138);
+    --ryze-accent-hover: oklch(0.83 0.075 138);
+    --ryze-accent-active: oklch(0.7 0.066 138);
+    --ryze-accent-soft: oklch(0.78 0.07 138 / 0.16);
+    --ryze-accent-fg: oklch(0.18 0.018 126);
     --success-token: oklch(0.74 0.14 145);
     --warning-token: oklch(0.8 0.14 80);
     --danger-token: oklch(0.65 0.2 25);
@@ -146,23 +146,23 @@
   }
 
   [data-theme="darkBlue"] {
-    --bg-0: oklch(0.16 0.025 248);
-    --bg-1: oklch(0.19 0.025 248);
-    --bg-2: oklch(0.23 0.023 246);
-    --bg-3: oklch(0.28 0.022 242);
-    --bg-4: oklch(0.34 0.02 236);
-    --fg-0: oklch(0.96 0.01 82);
-    --fg-1: oklch(0.83 0.012 84);
-    --fg-2: oklch(0.64 0.011 86);
-    --fg-3: oklch(0.49 0.011 90);
-    --border-0: oklch(0.31 0.02 238);
-    --border-1: oklch(0.38 0.02 232);
-    --border-subtle: oklch(0.24 0.02 246);
-    --ryze-accent: oklch(0.72 0.12 86);
-    --ryze-accent-hover: oklch(0.77 0.125 88);
-    --ryze-accent-active: oklch(0.66 0.11 84);
-    --ryze-accent-soft: oklch(0.72 0.12 86 / 0.16);
-    --ryze-accent-fg: oklch(0.19 0.02 250);
+    --bg-0: oklch(0.18 0.018 126);
+    --bg-1: oklch(0.21 0.017 126);
+    --bg-2: oklch(0.25 0.016 126);
+    --bg-3: oklch(0.3 0.018 126);
+    --bg-4: oklch(0.36 0.018 126);
+    --fg-0: oklch(0.95 0.014 98);
+    --fg-1: oklch(0.84 0.012 100);
+    --fg-2: oklch(0.66 0.012 104);
+    --fg-3: oklch(0.51 0.012 108);
+    --border-0: oklch(0.36 0.018 122);
+    --border-1: oklch(0.43 0.018 120);
+    --border-subtle: oklch(0.28 0.016 124);
+    --ryze-accent: oklch(0.78 0.07 138);
+    --ryze-accent-hover: oklch(0.83 0.075 138);
+    --ryze-accent-active: oklch(0.7 0.066 138);
+    --ryze-accent-soft: oklch(0.78 0.07 138 / 0.16);
+    --ryze-accent-fg: oklch(0.18 0.018 126);
   }
 
   [data-theme="lightGold"] {
@@ -183,6 +183,68 @@
     --ryze-accent-active: oklch(0.5 0.1 72);
     --ryze-accent-soft: oklch(0.58 0.11 76 / 0.14);
     --ryze-accent-fg: oklch(0.97 0.01 92);
+  }
+
+  [data-theme="appleDark"] {
+    --bg-0: oklch(0.18 0.004 260);
+    --bg-1: oklch(0.215 0.005 260);
+    --bg-2: oklch(0.245 0.005 260);
+    --bg-3: oklch(0.295 0.006 260);
+    --bg-4: oklch(0.345 0.007 260);
+    --fg-0: oklch(0.985 0.002 260);
+    --fg-1: oklch(0.84 0.004 260);
+    --fg-2: oklch(0.64 0.005 260);
+    --fg-3: oklch(0.46 0.005 260);
+    --border-0: oklch(0.3 0.005 260);
+    --border-1: oklch(0.38 0.006 260);
+    --border-subtle: oklch(0.255 0.005 260);
+    --ryze-accent: oklch(0.68 0.17 250);
+    --ryze-accent-hover: oklch(0.73 0.16 250);
+    --ryze-accent-active: oklch(0.62 0.18 250);
+    --ryze-accent-soft: oklch(0.68 0.17 250 / 0.16);
+    --ryze-accent-fg: oklch(0.99 0 0);
+    --success-token: oklch(0.74 0.16 150);
+    --warning-token: oklch(0.78 0.16 75);
+    --danger-token: oklch(0.65 0.22 25);
+    --info-token: oklch(0.72 0.13 220);
+    --success-soft-token: oklch(0.74 0.16 150 / 0.16);
+    --warning-soft-token: oklch(0.78 0.16 75 / 0.16);
+    --danger-soft-token: oklch(0.65 0.22 25 / 0.16);
+    --info-soft-token: oklch(0.72 0.13 220 / 0.16);
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+      "SF Pro Text", "Inter", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  }
+
+  [data-theme="appleLight"] {
+    --bg-0: oklch(0.99 0.002 260);
+    --bg-1: oklch(0.975 0.003 260);
+    --bg-2: oklch(0.955 0.004 260);
+    --bg-3: oklch(0.92 0.005 260);
+    --bg-4: oklch(0.87 0.006 260);
+    --fg-0: oklch(0.22 0.005 260);
+    --fg-1: oklch(0.38 0.005 260);
+    --fg-2: oklch(0.55 0.005 260);
+    --fg-3: oklch(0.7 0.004 260);
+    --border-0: oklch(0.89 0.005 260);
+    --border-1: oklch(0.81 0.006 260);
+    --border-subtle: oklch(0.94 0.004 260);
+    --ryze-accent: oklch(0.58 0.19 250);
+    --ryze-accent-hover: oklch(0.54 0.19 250);
+    --ryze-accent-active: oklch(0.5 0.19 250);
+    --ryze-accent-soft: oklch(0.58 0.19 250 / 0.1);
+    --ryze-accent-fg: oklch(0.99 0 0);
+    --success-token: oklch(0.74 0.16 150);
+    --warning-token: oklch(0.78 0.16 75);
+    --danger-token: oklch(0.65 0.22 25);
+    --info-token: oklch(0.72 0.13 220);
+    --success-soft-token: oklch(0.74 0.16 150 / 0.16);
+    --warning-soft-token: oklch(0.78 0.16 75 / 0.16);
+    --danger-soft-token: oklch(0.65 0.22 25 / 0.16);
+    --info-soft-token: oklch(0.72 0.13 220 / 0.16);
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+      "SF Pro Text", "Inter", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   }
 }
 

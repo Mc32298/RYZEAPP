@@ -1,9 +1,10 @@
-import { ChevronDown, ChevronRight, Download, Paperclip } from "lucide-react";
+import { Download, FileText } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import type { EmailThread } from "@/types/email";
 import {
   getConversationFolderLabel,
+  getConversationSenderEmail,
   getConversationSenderName,
 } from "./threadMessageRendering";
 import { SandboxedEmailFrame } from "./SandboxedEmailFrame";
@@ -44,6 +45,7 @@ export function ConversationMessageCard({
   onDownloadAttachment,
 }: ConversationMessageCardProps) {
   const senderName = getConversationSenderName(email, currentUserEmail);
+  const senderEmail = getConversationSenderEmail(email);
   const folderLabel = getConversationFolderLabel(email);
   const downloadableAttachments =
     email.attachments?.filter((attachment) => !attachment.isInline) || [];
@@ -51,11 +53,10 @@ export function ConversationMessageCard({
   return (
     <section
       className={cn(
-        "rounded-[var(--radius-ryze-md)] border transition-colors",
-        isActive
-          ? "border-[var(--ryze-accent)] bg-[var(--bg-1)]"
-          : "border-[var(--border-subtle)] bg-[var(--bg-1)]",
+        "border-b border-[var(--border-subtle)] pb-8 transition-colors last:border-b-0",
+        isActive && "bg-[color-mix(in_srgb,var(--bg-1)_42%,transparent)]",
       )}
+      onClick={onFocus}
     >
       <button
         type="button"
@@ -63,41 +64,43 @@ export function ConversationMessageCard({
           onFocus();
           onToggleExpanded();
         }}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+        className="flex w-full items-start gap-3.5 py-5 text-left"
       >
+        {showAvatars && (
+          <div
+            className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold text-white"
+            style={{ backgroundColor: email.sender.color }}
+          >
+            {email.sender.initials}
+          </div>
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
-            {showAvatars && (
-              <div
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-xs font-semibold text-white"
-                style={{ backgroundColor: email.sender.color }}
-              >
-                {email.sender.initials}
-              </div>
-            )}
-            <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--fg-0)]">
+            <span className="truncate text-[15px] font-semibold text-[var(--fg-0)]">
               {senderName}
             </span>
+            {senderEmail && (
+              <span className="truncate font-mono-jetbrains text-[12px] text-[var(--fg-2)]">
+                {senderEmail}
+              </span>
+            )}
             {folderLabel && (
               <span className="shrink-0 rounded-[var(--radius-ryze-xs)] border border-[var(--border-0)] px-1.5 py-0.5 font-mono-jetbrains text-[10px] uppercase text-[var(--fg-3)]">
                 {folderLabel}
               </span>
             )}
           </div>
-          <p className="mt-1 line-clamp-1 text-[12px] text-[var(--fg-2)]">
-            {email.preview}
+          <p className="mt-1 font-mono-jetbrains text-[11px] text-[var(--fg-2)]">
+            to {email.to.length > 0 ? email.to.join(", ") : currentUserEmail}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="text-right font-mono-jetbrains text-[10px] text-[var(--fg-3)]">
-            {format(email.timestamp, "MMM d, yyyy · HH:mm")}
-          </span>
-          {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </div>
+        <span className="shrink-0 pt-1 text-right font-mono-jetbrains text-[11px] text-[var(--fg-2)]">
+          {format(email.timestamp, "EEE, MMM d · h:mm a")}
+        </span>
       </button>
 
       {isExpanded && (
-        <div className="border-t border-[var(--border-subtle)] px-4 pb-4 pt-3">
+        <div className={cn("pb-2", showAvatars ? "ml-[54px]" : "ml-0")}>
           <SandboxedEmailFrame
             html={visibleHtml}
             isDarkMode={isDarkMode}
@@ -125,31 +128,37 @@ export function ConversationMessageCard({
           )}
 
           {downloadableAttachments.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-6 flex flex-wrap gap-3">
               {downloadableAttachments.map((attachment) => (
-                <div
+                <button
                   key={attachment.id}
-                  className="flex items-center gap-2 rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] px-2.5 py-2 text-[12px] text-[var(--fg-2)]"
+                  type="button"
+                  onClick={() =>
+                    onDownloadAttachment(
+                      email.messageId,
+                      attachment.id,
+                      attachment.filename,
+                    )
+                  }
+                  className="flex min-w-[210px] max-w-[280px] items-center gap-3 rounded-[var(--radius-ryze-md)] border border-[var(--border-0)] bg-[var(--bg-1)] px-3 py-3 text-left transition-colors hover:border-[var(--border-1)] hover:bg-[var(--bg-2)]"
+                  title={`Download ${attachment.filename}`}
                 >
-                  <Paperclip size={12} />
-                  <span className="max-w-[220px] truncate">
-                    {attachment.filename}
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-ryze-sm)] bg-[var(--bg-2)] text-[var(--fg-2)]">
+                    <FileText size={15} />
                   </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onDownloadAttachment(
-                        email.messageId,
-                        attachment.id,
-                        attachment.filename,
-                      )
-                    }
-                    className="ml-1 inline-flex items-center gap-1 rounded-[var(--radius-ryze-xs)] border border-[var(--border-0)] bg-[var(--bg-2)] px-2 py-1 text-[11px] font-semibold text-[var(--fg-1)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
-                  >
-                    <Download size={11} />
-                    Download
-                  </button>
-                </div>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-mono-jetbrains text-[12px] font-semibold text-[var(--fg-0)]">
+                      {attachment.filename}
+                    </span>
+                    <span className="mt-1 block font-mono-jetbrains text-[10px] text-[var(--fg-2)]">
+                      {Math.max(1, Math.round(attachment.size / 1024))} KB
+                    </span>
+                  </span>
+                  <Download
+                    size={13}
+                    className="shrink-0 text-[var(--fg-3)]"
+                  />
+                </button>
               ))}
             </div>
           )}

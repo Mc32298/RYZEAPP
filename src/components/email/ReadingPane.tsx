@@ -6,10 +6,9 @@ import {
   Archive,
   Trash2,
   MoreHorizontal,
-  Star,
   Paperclip,
+  Send,
   Tag,
-  Download,
   Sparkles,
   type LucideIcon,
 } from "lucide-react";
@@ -17,7 +16,7 @@ import { EmailThread, EmailLabel } from "@/types/email";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import DOMPurify from "dompurify";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ConversationMessageCard } from "./ConversationMessageCard";
 import { ReadingInsightsRail } from "./ReadingInsightsRail";
 import { deriveReadingInsights, type AiTone } from "./readingInsights";
@@ -25,13 +24,16 @@ import {
   loadStoredInsightsCollapsed,
   saveStoredInsightsCollapsed,
 } from "./readingInsightsCollapse";
-import { getDefaultExpandedMessageIds, stripQuotedHtml } from "./threadView";
 import {
-  getConversationSenderEmail,
+  getDefaultExpandedMessageIds,
+  getReadingTimelineMessages,
+  scrollReadingTimelineToBottom,
+  stripQuotedHtml,
+} from "./threadView";
+import {
   getConversationSenderName,
   renderThreadMessageHtml,
 } from "./threadMessageRendering";
-import { collectThreadAttachments } from "./readingAttachments";
 
 interface ReadingPaneProps {
   email: EmailThread | null;
@@ -39,6 +41,7 @@ interface ReadingPaneProps {
   relatedEmails: EmailThread[];
   onReplyWithTone: (tone: AiTone) => void;
   onReply: (message?: EmailThread) => void;
+  onInlineReplySend: (message: EmailThread, bodyText: string) => Promise<void>;
   onReplyAll: (message?: EmailThread) => void;
   onForward: (message?: EmailThread) => void;
   onArchive: (id: string) => void;
@@ -341,6 +344,7 @@ export function ReadingPane({
   relatedEmails,
   onReplyWithTone,
   onReply,
+  onInlineReplySend,
   onReplyAll,
   onForward,
   onArchive,
@@ -378,11 +382,18 @@ export function ReadingPane({
   const [quotedOpenById, setQuotedOpenById] = useState<
     Record<string, boolean>
   >({});
+  const [inlineReplyBody, setInlineReplyBody] = useState("");
+  const [isInlineReplySending, setIsInlineReplySending] = useState(false);
+  const [inlineReplyError, setInlineReplyError] = useState("");
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   const senderEmail = normalizeEmailAddress(email?.sender.email || "");
   const isTrustedSender = senderEmail
     ? trustedImageSenders.includes(senderEmail)
     : false;
+  const conversationMessages =
+    threadMessages.length > 0 ? threadMessages : email ? [email] : [];
+  const timelineMessages = getReadingTimelineMessages(conversationMessages);
 
   const handleTrustSender = () => {
     if (!senderEmail) return;
@@ -405,6 +416,8 @@ export function ReadingPane({
     setAiSuggestedActions([]);
     setAiError("");
     setIsAiSummarizing(false);
+    setInlineReplyBody("");
+    setInlineReplyError("");
   }, [email?.id]);
 
   useEffect(() => {
@@ -415,6 +428,38 @@ export function ReadingPane({
     setActiveMessageId(messages[0]?.id || email?.id || null);
     setQuotedOpenById({});
   }, [email?.id, threadMessages]);
+
+  useEffect(() => {
+    const firstFrame = window.requestAnimationFrame(() => {
+      scrollReadingTimelineToBottom(scrollContainerRef.current);
+
+      window.requestAnimationFrame(() => {
+        scrollReadingTimelineToBottom(scrollContainerRef.current);
+      });
+    });
+
+    return () => window.cancelAnimationFrame(firstFrame);
+  }, [email?.id, timelineMessages.length]);
+
+  const handleInlineReplySend = async () => {
+    const bodyText = inlineReplyBody.trim();
+    if (!bodyText || isInlineReplySending) return;
+
+    setIsInlineReplySending(true);
+    setInlineReplyError("");
+
+    try {
+      await onInlineReplySend(activeMessage, bodyText);
+      setInlineReplyBody("");
+    } catch (error) {
+      console.error("Inline reply failed:", error);
+      setInlineReplyError(
+        error instanceof Error ? error.message : "Failed to send reply.",
+      );
+    } finally {
+      setIsInlineReplySending(false);
+    }
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -506,13 +551,8 @@ export function ReadingPane({
 
   const shouldBlockRemoteImages =
     blockRemoteImages && !loadRemoteImagesForThisEmail && !isTrustedSender;
-  const conversationMessages =
-    threadMessages.length > 0 ? threadMessages : email ? [email] : [];
-  const threadAttachments = collectThreadAttachments(conversationMessages);
   const activeMessage =
     conversationMessages.find((item) => item.id === activeMessageId) || email;
-  const displaySenderName = getConversationSenderName(email, currentUserEmail);
-  const displaySenderEmail = getConversationSenderEmail(email);
   const derivedInsights = activeMessage
     ? deriveReadingInsights(activeMessage, conversationMessages)
     : null;
@@ -668,132 +708,10 @@ export function ReadingPane({
           </div>
         </div>
 
-        <div className="shrink-0 border-b border-[var(--border-subtle)] px-10 pb-6 pt-7">
-          <h1 className="mb-5 text-[24px] font-semibold leading-tight tracking-normal text-[var(--fg-0)]">
+        <div className="shrink-0 border-b border-[var(--border-subtle)] px-10 py-5">
+          <h1 className="text-[22px] font-semibold leading-tight tracking-normal text-[var(--fg-0)]">
             {email.subject}
           </h1>
-
-          <div className="flex items-start gap-3.5">
-            {showAvatars && (
-              <div
-                className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[7px] text-sm font-semibold text-white"
-                style={{ backgroundColor: email.sender.color }}
-              >
-                {email.sender.initials}
-              </div>
-            )}
-
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <span className="text-[14px] font-semibold text-[var(--fg-0)]">
-                    {displaySenderName}
-                  </span>
-                  {displaySenderEmail && (
-                    <span className="ml-2 font-mono-jetbrains text-[12px] text-[var(--fg-2)]">
-                      &lt;{displaySenderEmail}&gt;
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-3">
-                  {email.hasAttachment && (
-                    <div className="flex items-center gap-1 text-[var(--fg-2)]">
-                      <Paperclip size={12} strokeWidth={1.5} />
-                      <span className="font-mono-jetbrains text-xs">
-                        {email.attachments?.length || 1} attachment
-                        {email.attachments?.length !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                  )}
-                  <span className="font-mono-jetbrains text-[12px] text-[var(--fg-2)]">
-                    {format(email.timestamp, "MMM d, yyyy · HH:mm")}
-                  </span>
-                  <button
-                    onClick={() => onToggleStar(email.id)}
-                    className={cn(
-                      "transition-colors duration-150",
-                      email.isStarred
-                        ? "text-[var(--ryze-accent)]"
-                        : "text-[var(--fg-3)] hover:text-[var(--fg-2)]",
-                    )}
-                  >
-                    <Star
-                      size={14}
-                      strokeWidth={1.5}
-                      fill={email.isStarred ? "var(--ryze-accent)" : "none"}
-                    />
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-1 flex items-center gap-3">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[12px] text-[var(--fg-3)]">
-                    To
-                  </span>
-                  <span className="text-[12px] text-[var(--fg-2)]">
-                    {email.to.length > 0
-                      ? email.to.join(", ")
-                      : currentUserEmail}
-                  </span>
-                </div>
-
-                {email.cc && email.cc.length > 0 && (
-                  <>
-                    <div className="h-3 w-px bg-[var(--border-0)]" />
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[12px] text-[var(--fg-3)]">
-                        CC
-                      </span>
-                      <span className="text-[12px] text-[var(--fg-2)]">
-                        {email.cc.join(", ")}
-                      </span>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-          {threadAttachments.length > 0 && (
-            <div className={cn("mt-4", showAvatars ? "ml-12" : "ml-0")}>
-              <div className="mb-2 flex items-center gap-2 font-mono-jetbrains text-[10px] uppercase tracking-[0.08em] text-[var(--fg-3)]">
-                <Paperclip size={12} strokeWidth={1.5} />
-                Attachments
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {threadAttachments.map((attachment) => (
-                  <button
-                    key={`${attachment.messageId}:${attachment.id}`}
-                    type="button"
-                    onClick={() =>
-                      onDownloadAttachment(
-                        attachment.messageId,
-                        attachment.id,
-                        attachment.filename,
-                      )
-                    }
-                    className="flex items-center gap-2 rounded-[6px] border border-[var(--border-0)] bg-[var(--bg-1)] px-3 py-2 text-left transition-colors hover:bg-[var(--bg-2)]"
-                    title={`Download ${attachment.filename}`}
-                  >
-                    <Paperclip
-                      size={12}
-                      strokeWidth={1.5}
-                      className="shrink-0 text-[var(--fg-3)]"
-                    />
-                    <span className="max-w-[220px] truncate text-[12px] text-[var(--fg-1)]">
-                      {attachment.filename}
-                    </span>
-                    <Download
-                      size={12}
-                      strokeWidth={1.5}
-                      className="shrink-0 text-[var(--fg-2)]"
-                    />
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
           {email.labels.length > 0 && (
             <div
               className={cn(
@@ -819,7 +737,10 @@ export function ReadingPane({
         </div>
 
         <div className="min-h-0 flex flex-1 overflow-hidden">
-          <div className="min-w-0 flex flex-1 flex-col overflow-y-auto overscroll-contain px-10 py-7 scrollbar-thin">
+          <div
+            ref={scrollContainerRef}
+            className="min-w-0 flex flex-1 flex-col overflow-y-auto overscroll-contain px-10 py-7 scrollbar-thin"
+          >
             {blockRemoteImages &&
               !loadRemoteImagesForThisEmail &&
               !isTrustedSender && (
@@ -893,8 +814,8 @@ export function ReadingPane({
               </div>
             )}
 
-            <div className="space-y-3">
-              {conversationMessages.map((message) => {
+            <div className="space-y-0">
+              {timelineMessages.map((message) => {
                 let renderedBody = sanitizeEmailHtml(
                   message.body || "",
                   shouldBlockRemoteImages,
@@ -959,6 +880,62 @@ export function ReadingPane({
                   />
                 );
               })}
+              <div
+                className="mt-8 rounded-[var(--radius-ryze-lg)] border border-[var(--border-1)] bg-[var(--bg-1)] p-4"
+              >
+                <div className="mb-4 flex items-center gap-2 font-mono-jetbrains text-[10px] uppercase tracking-[0.08em] text-[var(--fg-2)]">
+                  <Reply size={12} />
+                  Reply to{" "}
+                  {getConversationSenderName(activeMessage, currentUserEmail)}
+                </div>
+                <textarea
+                  value={inlineReplyBody}
+                  onChange={(event) => {
+                    setInlineReplyBody(event.target.value);
+                    setInlineReplyError("");
+                  }}
+                  className="h-24 w-full resize-none bg-transparent text-[14px] leading-relaxed text-[var(--fg-0)] outline-none placeholder:text-[var(--fg-3)]"
+                  placeholder="Type a reply..."
+                  onFocus={() => setActiveMessageId(activeMessage.id)}
+                />
+                {inlineReplyError && (
+                  <p className="mt-3 text-[12px] text-[var(--danger-token)]">
+                    {inlineReplyError}
+                  </p>
+                )}
+                <div className="mt-4 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleInlineReplySend}
+                      disabled={!inlineReplyBody.trim() || isInlineReplySending}
+                      className={cn(
+                        "flex items-center gap-2 rounded-[var(--radius-ryze-md)] px-4 py-2 text-[13px] font-semibold transition-colors",
+                        inlineReplyBody.trim() && !isInlineReplySending
+                          ? "bg-[var(--ryze-accent)] text-[var(--ryze-accent-fg)] hover:bg-[var(--ryze-accent-hover)]"
+                          : "cursor-not-allowed bg-[var(--bg-3)] text-[var(--fg-3)]",
+                      )}
+                    >
+                      <Send size={13} strokeWidth={2} />
+                      {isInlineReplySending ? "Sending..." : "Send"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onReply(activeMessage)}
+                      className="rounded-[var(--radius-ryze-md)] px-3 py-2 text-[13px] font-semibold text-[var(--fg-1)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
+                    >
+                      Pop out
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-ryze-sm)] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
+                    title="Attach file"
+                  >
+                    <Paperclip size={15} />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 

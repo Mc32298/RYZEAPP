@@ -184,10 +184,10 @@ const themeOptions: Array<{
   },
   {
     id: "darkBlue",
-    label: "Dark Blue",
+    label: "Soft Onyx",
     icon: Moon,
     swatch:
-      "linear-gradient(135deg, oklch(0.17 0.03 248), oklch(0.32 0.04 240) 62%, oklch(0.5 0.08 92))",
+      "linear-gradient(135deg, oklch(0.18 0.018 126), oklch(0.3 0.018 126) 62%, oklch(0.78 0.07 138))",
   },
   {
     id: "lightGold",
@@ -196,14 +196,28 @@ const themeOptions: Array<{
     swatch:
       "linear-gradient(135deg, oklch(0.97 0.02 95), oklch(0.92 0.03 88) 58%, oklch(0.84 0.07 85))",
   },
+  {
+    id: "appleDark",
+    label: "Apple Dark",
+    icon: Moon,
+    swatch:
+      "linear-gradient(135deg, oklch(0.18 0.004 260), oklch(0.295 0.006 260) 62%, oklch(0.68 0.17 250))",
+  },
+  {
+    id: "appleLight",
+    label: "Apple Light",
+    icon: SunMedium,
+    swatch:
+      "linear-gradient(135deg, oklch(0.99 0.002 260), oklch(0.92 0.005 260) 62%, oklch(0.58 0.19 250))",
+  },
 ];
 
 const profileColorOptions = [
-  "#C9A84C",
-  "#A9793D",
-  "#5F7A52",
-  "#B85A50",
-  "#7C6546",
+  "#A8C7A2",
+  "#C7AE79",
+  "#8B6F5A",
+  "#7E9181",
+  "#B57865",
 ];
 const densityOptions: DensityMode[] = ["comfortable", "compact"];
 const cadenceOptions: NotificationCadence[] = ["instant", "hourly", "daily"];

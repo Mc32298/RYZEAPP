@@ -65,6 +65,47 @@ const KNOWN_FOLDERS = [
   { key: "deleteditems", icon: Trash2, label: "Trash" },
 ];
 
+type KnownFolderConfig = (typeof KNOWN_FOLDERS)[number];
+type SidebarSystemFolder = KnownFolderConfig & {
+  folder: MailFolder;
+  hasChildren: boolean;
+};
+
+export function getSidebarFolderSections(
+  folders: MailFolder[],
+  accountId: string,
+) {
+  const currentAccountFolders = folders.filter(
+    (folder) => folder.accountId === accountId,
+  );
+  const systemFolders = KNOWN_FOLDERS.map((known) => {
+    const folder = currentAccountFolders.find(
+      (candidate) => candidate.wellKnownName === known.key,
+    );
+    if (!folder) return null;
+
+    return {
+      ...known,
+      folder,
+      hasChildren: currentAccountFolders.some(
+        (candidate) => candidate.parentFolderId === folder.id,
+      ),
+    };
+  }).filter(Boolean) as SidebarSystemFolder[];
+
+  const customRoots = currentAccountFolders.filter((folder) => {
+    if (folder.wellKnownName) return false;
+    if (!folder.parentFolderId) return true;
+    return !currentAccountFolders.some((parent) => parent.id === folder.parentFolderId);
+  });
+
+  return {
+    currentAccountFolders,
+    systemFolders,
+    customRoots,
+  };
+}
+
 /** Recursive component to render folders and all their sub-folders */
 const FolderItem = ({
   folder,
@@ -382,18 +423,10 @@ export function Sidebar({
   const currentAccountFolders = folders.filter(
     (folder) => folder.accountId === currentAccount.id,
   );
-  const systemFolders = KNOWN_FOLDERS.map((known) => {
-    const folder = currentAccountFolders.find(
-      (candidate) => candidate.wellKnownName === known.key,
-    );
-    return folder ? { ...known, folder } : null;
-  }).filter(Boolean) as Array<(typeof KNOWN_FOLDERS)[number] & { folder: MailFolder }>;
-
-  const customRoots = currentAccountFolders.filter((folder) => {
-    if (folder.wellKnownName) return false;
-    if (!folder.parentFolderId) return true;
-    return !currentAccountFolders.some((parent) => parent.id === folder.parentFolderId);
-  });
+  const { systemFolders, customRoots } = getSidebarFolderSections(
+    folders,
+    currentAccount.id,
+  );
 
   const currentAccountLabels = labels.filter(
     (label) => label.accountId === currentAccount.id,
@@ -414,7 +447,7 @@ export function Sidebar({
               Compose
             </span>
             <span className="rounded-[4px] bg-black/10 px-1.5 py-px font-mono-jetbrains text-[10px]">
-              ⌘N
+              C
             </span>
           </button>
         </div>
@@ -451,8 +484,32 @@ export function Sidebar({
               )}
             </button>
 
-            {systemFolders.map(({ folder, icon: Icon, label }) => {
+            {systemFolders.map(({ folder, icon: Icon, label, hasChildren }) => {
               const isActive = activeFolder === folder.id && !activeLabelId;
+              if (hasChildren) {
+                return (
+                  <FolderItem
+                    key={folder.id}
+                    folder={folder}
+                    allFolders={currentAccountFolders}
+                    depth={0}
+                    activeFolder={activeFolder}
+                    activeLabelId={activeLabelId}
+                    unreadCounts={unreadCounts}
+                    onFolderClick={(fid: string) =>
+                      handleFolderClick(currentAccount, fid)
+                    }
+                    onRename={onRenameFolder}
+                    onEmpty={onEmptyFolder}
+                    onDelete={onDeleteFolder}
+                    openPrompt={openPrompt}
+                    openConfirm={openConfirm}
+                    onEmailDropToFolder={onEmailDropToFolder}
+                    icon={Icon}
+                  />
+                );
+              }
+
               return (
                 <button
                   key={folder.id}

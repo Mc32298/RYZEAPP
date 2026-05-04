@@ -8,7 +8,7 @@ interface SandboxedEmailFrameProps {
 
 function buildSrcdoc(html: string, isDarkMode: boolean): string {
   const fg = isDarkMode ? "#e5e5e5" : "#1f1f1f";
-  const linkColor = isDarkMode ? "#C9A84C" : "#8B5E1A";
+  const linkColor = isDarkMode ? "#A8C7A2" : "#8B6F5A";
 
   return `<!DOCTYPE html>
 <html>
