@@ -126,33 +126,49 @@ export function UpdaterTopBarButton() {
   );
 }
 
-// Floating popup shown when the update is ready to install
+// Centered modal shown when the update is downloaded and ready to install
 export function UpdaterReadyModal() {
   const { status, installUpdate } = useUpdater();
 
   return (
     <AnimatePresence>
       {status === "ready" && (
-        <motion.div
-          key="ready"
-          initial={{ opacity: 0, y: 16, scale: 0.97 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.97, y: 8 }}
-          className="fixed bottom-6 right-6 z-[9999] w-[300px] rounded-md border border-[var(--email-border-strong)] bg-[var(--email-surface)] p-5 shadow-2xl"
-        >
-          <h3 className="mb-2 font-fraunces font-semibold text-[var(--email-text-strong)]">
-            Update Ready
-          </h3>
-          <p className="mb-4 font-space-grotesk text-sm text-[var(--email-text-muted)]">
-            The update has been downloaded. Restart to apply it.
-          </p>
-          <button
-            onClick={installUpdate}
-            className="w-full rounded-sm bg-[var(--email-accent)] px-3 py-2 font-space-grotesk text-sm font-semibold text-[var(--email-accent-contrast)] transition-transform hover:scale-[1.02]"
+        <>
+          {/* Backdrop */}
+          <motion.div
+            key="backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[9998] bg-black/50"
+          />
+          {/* Dialog */}
+          <motion.div
+            key="ready"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.15 }}
+            className="fixed left-1/2 top-1/2 z-[9999] w-[340px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[var(--border-0)] bg-[var(--bg-1)] p-6 shadow-2xl"
           >
-            Restart & Install
-          </button>
-        </motion.div>
+            <div className="mb-1 flex items-center gap-2">
+              <div className="h-2 w-2 rounded-full bg-green-500" />
+              <h3 className="text-sm font-semibold text-[var(--fg-0)]">
+                Update Ready to Install
+              </h3>
+            </div>
+            <p className="mb-5 mt-2 text-sm text-[var(--fg-2)]">
+              The new version has been downloaded and is ready to go. Restart
+              the app to apply the update.
+            </p>
+            <button
+              onClick={installUpdate}
+              className="w-full rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-500"
+            >
+              Restart & Install
+            </button>
+          </motion.div>
+        </>
       )}
     </AnimatePresence>
   );
