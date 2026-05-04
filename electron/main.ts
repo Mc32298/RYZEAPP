@@ -4318,10 +4318,11 @@ const CSP_PROD = [
   "form-action 'none'",
 ].join("; ");
 
-// Dev CSP is looser: Vite HMR needs ws:, unsafe-eval (source maps), and localhost
+// Dev CSP is looser: Vite HMR needs ws:, unsafe-eval (source maps), unsafe-inline
+// (React SWC plugin injects an inline preamble script for fast refresh), and localhost
 const CSP_DEV = [
   "default-src 'self' http://localhost:* ws://localhost:*",
-  "script-src 'self' http://localhost:* 'unsafe-eval'",
+  "script-src 'self' http://localhost:* 'unsafe-eval' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline' http://localhost:*",
   "img-src 'self' data: blob: https: http://localhost:*",
   "font-src 'self' data: http://localhost:*",
