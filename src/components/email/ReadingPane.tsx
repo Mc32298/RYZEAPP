@@ -21,6 +21,10 @@ import { useState, useEffect } from "react";
 import { ConversationMessageCard } from "./ConversationMessageCard";
 import { ReadingInsightsRail } from "./ReadingInsightsRail";
 import { deriveReadingInsights, type AiTone } from "./readingInsights";
+import {
+  loadStoredInsightsCollapsed,
+  saveStoredInsightsCollapsed,
+} from "./readingInsightsCollapse";
 import { getDefaultExpandedMessageIds, stripQuotedHtml } from "./threadView";
 import {
   getConversationSenderEmail,
@@ -94,6 +98,36 @@ function ActionButton({
           {shortcut}
         </kbd>
       )}
+    </button>
+  );
+}
+
+function IconActionButton({
+  icon: Icon,
+  label,
+  shortcut,
+  onClick,
+  isActive = false,
+}: {
+  icon: LucideIcon;
+  label: string;
+  shortcut?: string;
+  onClick?: () => void;
+  isActive?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={`${label}${shortcut ? ` (${shortcut})` : ""}`}
+      className={cn(
+        "flex h-7 w-7 items-center justify-center rounded-[6px] border transition-colors",
+        isActive
+          ? "border-[var(--ryze-accent)] bg-[var(--ryze-accent-soft)] text-[var(--ryze-accent)]"
+          : "border-transparent text-[var(--fg-3)] hover:bg-[var(--bg-2)] hover:text-[var(--fg-1)]",
+      )}
+    >
+      <Icon size={14} strokeWidth={1.5} />
     </button>
   );
 }
@@ -315,6 +349,11 @@ export function ReadingPane({
   const [aiError, setAiError] = useState("");
   const [expandedMessageIds, setExpandedMessageIds] = useState<string[]>([]);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  const [isAiInsightsCollapsed, setIsAiInsightsCollapsed] = useState(() =>
+    loadStoredInsightsCollapsed(
+      typeof window === "undefined" ? null : window.localStorage,
+    ),
+  );
   const [quotedOpenById, setQuotedOpenById] = useState<
     Record<string, boolean>
   >({});
@@ -355,6 +394,38 @@ export function ReadingPane({
     setActiveMessageId(messages[0]?.id || email?.id || null);
     setQuotedOpenById({});
   }, [email?.id, threadMessages]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    saveStoredInsightsCollapsed(window.localStorage, isAiInsightsCollapsed);
+  }, [isAiInsightsCollapsed]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) {
+        return;
+      }
+
+      if (event.key.toLowerCase() !== "i") return;
+
+      const target = event.target as HTMLElement | null;
+      const isTypingField =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable);
+
+      if (isTypingField) return;
+
+      event.preventDefault();
+      setIsAiInsightsCollapsed((prev) => !prev);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const handleAiSummarize = async () => {
     const summaryEmail =
@@ -527,7 +598,18 @@ export function ReadingPane({
             )}
           </div>
 
-          <div className="ml-auto relative">
+          <div className="ml-auto flex items-center gap-1">
+            <IconActionButton
+              icon={Sparkles}
+              label={
+                isAiInsightsCollapsed
+                  ? "Show AI insights"
+                  : "Hide AI insights"
+              }
+              shortcut="Alt+I"
+              onClick={() => setIsAiInsightsCollapsed((prev) => !prev)}
+              isActive={!isAiInsightsCollapsed}
+            />
             <button
               onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
               className={cn(
@@ -860,6 +942,7 @@ export function ReadingPane({
 
           {activeMessage && derivedInsights && (
             <ReadingInsightsRail
+              isCollapsed={isAiInsightsCollapsed}
               email={activeMessage}
               aiSummary={aiSummary}
               aiKeyPoints={aiKeyPoints}

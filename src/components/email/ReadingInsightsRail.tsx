@@ -1,11 +1,9 @@
-import {
-  Clock3,
-  Sparkles,
-} from "lucide-react";
+import { Clock3, Sparkles } from "lucide-react";
 import type { EmailThread } from "@/types/email";
 import type { AiTone, ReadingInsightModel } from "./readingInsights";
 
 interface ReadingInsightsRailProps {
+  isCollapsed: boolean;
   email: EmailThread;
   aiSummary: string;
   aiKeyPoints: string[];
@@ -28,6 +26,7 @@ const toneLabels: Record<AiTone, string> = {
 };
 
 export function ReadingInsightsRail({
+  isCollapsed,
   email,
   aiSummary,
   aiKeyPoints,
@@ -39,6 +38,12 @@ export function ReadingInsightsRail({
   onToneSelect,
   onNextAction,
 }: ReadingInsightsRailProps) {
+  if (isCollapsed) {
+    return (
+      <aside className="h-full w-[14px] shrink-0 border-l border-[var(--border-subtle)] bg-[var(--bg-1)]" />
+    );
+  }
+
   const summaryText = aiSummary || insights.summaryFallback;
   const keyPoints =
     aiKeyPoints.length > 0 ? aiKeyPoints : insights.primaryPanel.items;
