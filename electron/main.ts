@@ -3040,6 +3040,13 @@ ipcMain.on("system:save-drafts", (_event, drafts) => {
     fs.writeFileSync(draftsFilePath, encryptedData);
   } catch (error) {
     console.error("Failed to securely save drafts:", error);
+    const windows = BrowserWindow.getAllWindows();
+    if (windows.length > 0) {
+      windows[0].webContents.send(
+        "drafts:save-failed",
+        "Drafts could not be saved due to an encryption error.",
+      );
+    }
   }
 });
 
