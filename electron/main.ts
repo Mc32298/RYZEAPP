@@ -4298,7 +4298,56 @@ ipcMain.handle("microsoft-mail:move", async (_event, payload) => {
 // APP LIFECYCLE
 // =============================================================================
 
+// Content Security Policy strings.
+// All network I/O happens in the main process via IPC — the renderer never
+// calls external APIs directly, so connect-src can be 'self' only.
+// Email images load inside the sandboxed iframe (same-origin), so img-src
+// must allow https: to let remote images through when the user enables them.
+const CSP_PROD = [
+  "default-src 'self'",
+  "script-src 'self'",
+  // unsafe-inline is required for React inline style props
+  "style-src 'self' 'unsafe-inline'",
+  // https: covers remote email images inside the sandboxed iframe
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'none'",
+].join("; ");
+
+// Dev CSP is looser: Vite HMR needs ws:, unsafe-eval (source maps), and localhost
+const CSP_DEV = [
+  "default-src 'self' http://localhost:* ws://localhost:*",
+  "script-src 'self' http://localhost:* 'unsafe-eval'",
+  "style-src 'self' 'unsafe-inline' http://localhost:*",
+  "img-src 'self' data: blob: https: http://localhost:*",
+  "font-src 'self' data: http://localhost:*",
+  "connect-src 'self' ws://localhost:* http://localhost:*",
+  "frame-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'none'",
+].join("; ");
+
 app.whenReady().then(() => {
+  // Inject Content-Security-Policy on every response the renderer receives.
+  // This covers both file:// (production) and http://localhost (dev).
+  electron.session.defaultSession.webRequest.onHeadersReceived(
+    (details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          "Content-Security-Policy": [
+            app.isPackaged ? CSP_PROD : CSP_DEV,
+          ],
+        },
+      });
+    },
+  );
+
   // Deny all permission requests (notifications, geolocation, media, etc.)
   // The app has no legitimate need for any of these.
   electron.session.defaultSession.setPermissionRequestHandler(
