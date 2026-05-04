@@ -13,11 +13,7 @@ import {
   buildThreadListRows,
   threadRowMatchesFilters,
 } from "./threadView";
-import {
-  buildInlineReplyHtml,
-  buildReplySubject,
-  getReplyRecipients,
-} from "./replyComposer";
+import { buildInlineReplyComment } from "./replyComposer";
 import {
   applyMovedEmailState,
   getKnownFolderIdForAccount,
@@ -1777,24 +1773,20 @@ export function EmailClient() {
   );
 
   const handleInlineReplySend = useCallback(
-    async (message: EmailThread, bodyText: string) => {
-      if (!window.electronAPI?.sendMicrosoftEmail) {
+    async (
+      message: EmailThread,
+      bodyText: string,
+      conversationMessages: EmailThread[],
+    ) => {
+      if (!window.electronAPI?.replyMicrosoftEmail) {
         throw new Error("Send email API is not available. Fully restart Electron.");
       }
 
-      const to = getReplyRecipients(message, currentAccount.email);
-      if (!to) {
-        throw new Error("No reply recipient found.");
-      }
-
-      await window.electronAPI.sendMicrosoftEmail({
+      await window.electronAPI.replyMicrosoftEmail({
         accountId: message.accountId || currentAccountId,
-        to,
-        cc: "",
-        subject: buildReplySubject(message),
-        body: buildInlineReplyHtml({
+        messageId: message.messageId,
+        comment: buildInlineReplyComment({
           bodyText,
-          sourceEmail: message,
           signature: settings.signature,
         }),
       });
@@ -1802,7 +1794,7 @@ export function EmailClient() {
       toast.success("Reply sent");
       window.electronAPI.syncMicrosoftInbox?.(currentAccountId).catch(console.error);
     },
-    [currentAccount.email, currentAccountId, settings.signature],
+    [currentAccountId, settings.signature],
   );
 
   const handleDraftMinimize = useCallback((id: string) => {

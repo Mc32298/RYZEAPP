@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { EmailThread } from "@/types/email";
 import {
+  buildInlineReplyComment,
   buildInlineReplyHtml,
   buildReplySubject,
+  getInlineReplyTargetMessage,
   getReplyRecipients,
 } from "./replyComposer";
 
@@ -57,6 +59,101 @@ describe("replyComposer", () => {
     );
   });
 
+  it("falls back to the latest non-self sender in the thread when the active message has no usable recipients", () => {
+    const externalMessage = makeEmail({
+      id: "msg-1",
+      sender: {
+        name: "Mara Klein",
+        email: "mara@mail.test",
+        initials: "MK",
+        color: "#2563eb",
+      },
+      to: ["mathias@mail.test"],
+      timestamp: new Date("2026-05-04T10:30:00Z"),
+    });
+    const selfMessage = makeEmail({
+      id: "msg-2",
+      sender: {
+        name: "Mathias",
+        email: "mathias@mail.test",
+        initials: "M",
+        color: "#2563eb",
+      },
+      to: ["mathias@mail.test"],
+      timestamp: new Date("2026-05-04T10:35:00Z"),
+    });
+
+    expect(
+      getReplyRecipients(selfMessage, "mathias@mail.test", [
+        externalMessage,
+        selfMessage,
+      ]),
+    ).toBe("mara@mail.test");
+  });
+
+  it("falls back to non-self thread participants when every sender is the current user", () => {
+    const olderSelfMessage = makeEmail({
+      id: "msg-1",
+      sender: {
+        name: "Mathias",
+        email: "mathias@mail.test",
+        initials: "M",
+        color: "#2563eb",
+      },
+      to: ["mara@mail.test"],
+      timestamp: new Date("2026-05-04T10:30:00Z"),
+    });
+    const latestSelfMessage = makeEmail({
+      id: "msg-2",
+      sender: {
+        name: "Mathias",
+        email: "mathias@mail.test",
+        initials: "M",
+        color: "#2563eb",
+      },
+      to: ["mathias@mail.test"],
+      timestamp: new Date("2026-05-04T10:35:00Z"),
+    });
+
+    expect(
+      getReplyRecipients(latestSelfMessage, "mathias@mail.test", [
+        olderSelfMessage,
+        latestSelfMessage,
+      ]),
+    ).toBe("mara@mail.test");
+  });
+
+  it("targets the newest non-self message for inline reply when the latest message is from the current user", () => {
+    const externalMessage = makeEmail({
+      id: "msg-1",
+      sender: {
+        name: "Mara Klein",
+        email: "mara@mail.test",
+        initials: "MK",
+        color: "#2563eb",
+      },
+      timestamp: new Date("2026-05-04T10:30:00Z"),
+    });
+    const latestSelfMessage = makeEmail({
+      id: "msg-2",
+      sender: {
+        name: "Mathias",
+        email: "mathias@mail.test",
+        initials: "M",
+        color: "#2563eb",
+      },
+      timestamp: new Date("2026-05-04T10:35:00Z"),
+    });
+
+    expect(
+      getInlineReplyTargetMessage(
+        latestSelfMessage,
+        [externalMessage, latestSelfMessage],
+        "mathias@mail.test",
+      ).id,
+    ).toBe("msg-1");
+  });
+
   it("keeps reply subjects from gaining duplicate prefixes", () => {
     expect(buildReplySubject(makeEmail({ subject: "Status check" }))).toBe(
       "Re: Status check",
@@ -77,5 +174,14 @@ describe("replyComposer", () => {
     expect(html).toContain("Mathias");
     expect(html).toContain("reply-quote");
     expect(html).toContain("Mara Klein");
+  });
+
+  it("builds a plain reply comment for the Graph reply action", () => {
+    expect(
+      buildInlineReplyComment({
+        bodyText: "Looks good",
+        signature: "Mathias",
+      }),
+    ).toBe("Looks good\n\nMathias");
   });
 });

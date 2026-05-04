@@ -41,6 +41,12 @@ type SendMicrosoftEmailPayload = {
   body?: string;
 };
 
+type ReplyMicrosoftEmailPayload = {
+  accountId: string;
+  messageId: string;
+  comment: string;
+};
+
 type AiSummarizeEmailPayload = {
   subject: string;
   senderName: string;
@@ -452,6 +458,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("microsoft-mail:mark-read", {
       accountId: assertString(accountId, "accountId", 256),
       messageId: assertString(messageId, "messageId", 2048),
+      isRead: true,
     }),
 
   getMicrosoftEmailsLocal: (accountId: string) =>
@@ -523,6 +530,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
       cc: optionalString(payload.cc, "cc", 4096),
       subject: optionalString(payload.subject, "subject", 512),
       body: optionalString(payload.body, "body", 500_000),
+    });
+  },
+
+  replyMicrosoftEmail: (payload: ReplyMicrosoftEmailPayload) => {
+    if (!payload || typeof payload !== "object") {
+      throw new TypeError("payload is required");
+    }
+
+    return ipcRenderer.invoke("microsoft-mail:reply", {
+      accountId: assertString(payload.accountId, "accountId", 256),
+      messageId: assertString(payload.messageId, "messageId", 2048),
+      comment: optionalString(payload.comment, "comment", 500_000),
     });
   },
 });

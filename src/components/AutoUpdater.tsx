@@ -142,6 +142,9 @@ export function UpdaterReadyModal() {
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[9998] bg-black/50"
           />
+          {/* Centering wrapper — no framer-motion transforms here so they don't
+              fight the translate(-50%,-50%) that Tailwind would add */}
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center">
           {/* Dialog */}
           <motion.div
             key="ready"
@@ -149,7 +152,7 @@ export function UpdaterReadyModal() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.15 }}
-            className="fixed left-1/2 top-1/2 z-[9999] w-[340px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[var(--border-0)] bg-[var(--bg-1)] p-6 shadow-2xl"
+            className="w-[340px] rounded-lg border border-[var(--border-0)] bg-[var(--bg-1)] p-6 shadow-2xl"
           >
             <div className="mb-1 flex items-center gap-2">
               <div className="h-2 w-2 rounded-full bg-green-500" />
@@ -168,6 +171,7 @@ export function UpdaterReadyModal() {
               Restart & Install
             </button>
           </motion.div>
+          </div>
         </>
       )}
     </AnimatePresence>

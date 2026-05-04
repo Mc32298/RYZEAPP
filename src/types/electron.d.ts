@@ -232,6 +232,12 @@ declare global {
         subject: string;
         body: string;
       }) => Promise<{ success: boolean }>;
+
+      replyMicrosoftEmail: (payload: {
+        accountId: string;
+        messageId: string;
+        comment: string;
+      }) => Promise<{ success: boolean }>;
     };
   }
 }

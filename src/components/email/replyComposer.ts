@@ -13,27 +13,70 @@ function plainTextToHtml(value: string) {
   return escapeHtml(value).replace(/\r?\n/g, "<br/>");
 }
 
+function normalizeEmail(value: string) {
+  return value.trim().toLowerCase();
+}
+
 export function buildReplySubject(email: EmailThread) {
   return email.subject.toLowerCase().startsWith("re:")
     ? email.subject
     : `Re: ${email.subject}`;
 }
 
+export function getInlineReplyTargetMessage(
+  activeMessage: EmailThread,
+  conversationMessages: EmailThread[],
+  currentUserEmail: string,
+) {
+  const currentUser = normalizeEmail(currentUserEmail);
+  const newestNonSelfMessage = [...conversationMessages]
+    .sort((left, right) => right.timestamp.getTime() - left.timestamp.getTime())
+    .find((message) => normalizeEmail(message.sender.email) !== currentUser);
+
+  return newestNonSelfMessage || activeMessage;
+}
+
 export function getReplyRecipients(
   email: EmailThread,
   currentUserEmail: string,
+  conversationMessages: EmailThread[] = [],
 ) {
   const currentUser = currentUserEmail.toLowerCase();
-  const recipients =
+  const directRecipients =
     email.sender.email.toLowerCase() === currentUser
       ? email.to
       : [email.sender.email];
-
-  return Array.from(
+  const normalizedRecipients = Array.from(
     new Set(
-      recipients.filter((recipient) => recipient.toLowerCase() !== currentUser),
+      directRecipients.filter(
+        (recipient) => recipient.toLowerCase() !== currentUser,
+      ),
     ),
-  ).join(", ");
+  );
+
+  if (normalizedRecipients.length > 0) {
+    return normalizedRecipients.join(", ");
+  }
+
+  const fallbackParticipants = Array.from(
+    new Set(
+      [...conversationMessages]
+        .sort((left, right) => right.timestamp.getTime() - left.timestamp.getTime())
+        .flatMap((message) => [
+          message.sender.email,
+          ...message.to,
+          ...(message.cc || []),
+        ])
+        .map((participant) => participant.trim())
+        .filter(
+          (participant) =>
+            participant.length > 0 &&
+            participant.toLowerCase() !== currentUser,
+        ),
+    ),
+  );
+
+  return fallbackParticipants.join(", ");
 }
 
 export function buildInlineReplyHtml({
@@ -69,4 +112,14 @@ export function buildInlineReplyHtml({
       ${originalBody}
     </div>
   `.trim();
+}
+
+export function buildInlineReplyComment({
+  bodyText,
+  signature,
+}: {
+  bodyText: string;
+  signature: string;
+}) {
+  return [bodyText.trim(), signature.trim()].filter(Boolean).join("\n\n");
 }

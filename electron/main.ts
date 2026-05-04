@@ -18,6 +18,8 @@ import { config as loadDotenv } from "dotenv";
 import * as path from "path";
 import * as fs from "fs";
 import http from "http"; // Used for the local OAuth callback server
+import { resolveMarkReadValue } from "./mailReadState";
+import { buildGraphReplyPayload } from "./mailReplyPayload";
 import crypto from "crypto"; // Used for PKCE code verifier / challenge generation
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
@@ -351,7 +353,8 @@ ipcMain.handle("updater:start-download", () => {
 });
 
 ipcMain.handle("updater:install", () => {
-  autoUpdater.quitAndInstall();
+  // isSilent=true → no NSIS installer window, isForceRunAfter=true → relaunch after install
+  autoUpdater.quitAndInstall(true, true);
   return true;
 });
 
@@ -3795,6 +3798,34 @@ ipcMain.handle("microsoft-mail:send", async (_event, payload) => {
   return { success: true };
 });
 
+/** Sends a reply through Graph's message reply action. */
+ipcMain.handle("microsoft-mail:reply", async (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+  const messageId = validateMessageId(payload?.messageId);
+  const comment = optionalString(payload?.comment, "comment", 500_000);
+  const accessToken = await getValidMicrosoftAccessToken(accountId);
+  const encodedMessageId = encodeURIComponent(messageId);
+
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${encodedMessageId}/reply`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(buildGraphReplyPayload(comment || "")),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to reply to email: ${errorText}`);
+  }
+
+  return { success: true };
+});
+
 /**
  * ⚠️  DEPRECATED / LEGACY — microsoft-mail:syncInbox
  *
@@ -3881,28 +3912,47 @@ ipcMain.handle("labels:remove-email", (_event, payload) => {
 
   return { success: true };
 });
-/** Marks a single message as read both remotely (Graph API) and locally (DB). */
-/** Marks a single message as read both remotely (Graph API) and locally (DB). */
+/** Marks a single message as read both locally (DB) and remotely (Graph API). */
 ipcMain.handle("microsoft-mail:mark-read", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
-  const { messageId, isRead } = payload;
-  if (!messageId) throw new Error("Missing messageId");
+  const messageId = validateMessageId(payload?.messageId);
+  const isRead = resolveMarkReadValue(payload?.isRead);
 
-  const stmt = db.prepare(
+  // Optimistic local update so the UI stays responsive
+  db.prepare(
     `UPDATE emails SET isRead = ? WHERE id = ? AND accountId = ?`,
-  );
-  stmt.run(isRead ? 1 : 0, messageId, accountId);
+  ).run(isRead ? 1 : 0, messageId, accountId);
 
-  // Background sync...
-  const authEnv = getMicrosoftOAuthEnv();
-  const tokens = getTokensByAccountId(accountId, authEnv);
-  if (tokens) {
-    updateMessage(tokens.accessToken, messageId, { isRead }).catch((e) =>
-      console.error("Failed background sync for mark-read:", e),
-    );
+  // Sync to Graph API immediately using a fresh (auto-refreshed) token
+  const accessToken = await getValidMicrosoftAccessToken(accountId);
+  const encodedMessageId = encodeURIComponent(messageId);
+
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${encodedMessageId}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ isRead }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    // Self-heal: if the message is gone server-side, remove the stale local copy
+    if (response.status === 404 || errorText.includes("ErrorItemNotFound")) {
+      db.prepare("DELETE FROM emails WHERE accountId = ? AND id = ?").run(
+        accountId,
+        messageId,
+      );
+      return { success: false, missing: true };
+    }
+    throw new Error(`Failed to mark message as read: ${errorText}`);
   }
 
-  return true;
+  return { success: true };
 });
 
 /** Marks a single message as unread both remotely (Graph API) and locally (DB). */
@@ -4561,3 +4611,4 @@ async function updateMessage(
 
   throw new Error("Microsoft Graph message update failed after retries");
 }
+import { resolveMarkReadValue } from "./mailReadState";

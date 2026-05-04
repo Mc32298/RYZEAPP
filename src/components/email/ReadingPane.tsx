@@ -34,6 +34,7 @@ import {
   getConversationSenderName,
   renderThreadMessageHtml,
 } from "./threadMessageRendering";
+import { getInlineReplyTargetMessage } from "./replyComposer";
 
 interface ReadingPaneProps {
   email: EmailThread | null;
@@ -41,7 +42,11 @@ interface ReadingPaneProps {
   relatedEmails: EmailThread[];
   onReplyWithTone: (tone: AiTone) => void;
   onReply: (message?: EmailThread) => void;
-  onInlineReplySend: (message: EmailThread, bodyText: string) => Promise<void>;
+  onInlineReplySend: (
+    message: EmailThread,
+    bodyText: string,
+    conversationMessages: EmailThread[],
+  ) => Promise<void>;
   onReplyAll: (message?: EmailThread) => void;
   onForward: (message?: EmailThread) => void;
   onArchive: (id: string) => void;
@@ -449,7 +454,11 @@ export function ReadingPane({
     setInlineReplyError("");
 
     try {
-      await onInlineReplySend(activeMessage, bodyText);
+      await onInlineReplySend(
+        inlineReplyTargetMessage,
+        bodyText,
+        conversationMessages,
+      );
       setInlineReplyBody("");
     } catch (error) {
       console.error("Inline reply failed:", error);
@@ -553,6 +562,11 @@ export function ReadingPane({
     blockRemoteImages && !loadRemoteImagesForThisEmail && !isTrustedSender;
   const activeMessage =
     conversationMessages.find((item) => item.id === activeMessageId) || email;
+  const inlineReplyTargetMessage = getInlineReplyTargetMessage(
+    activeMessage,
+    conversationMessages,
+    currentUserEmail,
+  );
   const derivedInsights = activeMessage
     ? deriveReadingInsights(activeMessage, conversationMessages)
     : null;
@@ -886,7 +900,10 @@ export function ReadingPane({
                 <div className="mb-4 flex items-center gap-2 font-mono-jetbrains text-[10px] uppercase tracking-[0.08em] text-[var(--fg-2)]">
                   <Reply size={12} />
                   Reply to{" "}
-                  {getConversationSenderName(activeMessage, currentUserEmail)}
+                  {getConversationSenderName(
+                    inlineReplyTargetMessage,
+                    currentUserEmail,
+                  )}
                 </div>
                 <textarea
                   value={inlineReplyBody}
@@ -921,7 +938,7 @@ export function ReadingPane({
                     </button>
                     <button
                       type="button"
-                      onClick={() => onReply(activeMessage)}
+                      onClick={() => onReply(inlineReplyTargetMessage)}
                       className="rounded-[var(--radius-ryze-md)] px-3 py-2 text-[13px] font-semibold text-[var(--fg-1)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
                     >
                       Pop out
