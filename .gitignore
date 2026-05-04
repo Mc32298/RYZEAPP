@@ -28,7 +28,7 @@ release
 gemini.md
 
 docs
-
+docs/superpowers
 !node_modules/.vite
 
 **/tempobook/dynamic/
