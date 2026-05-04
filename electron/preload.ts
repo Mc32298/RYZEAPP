@@ -183,6 +183,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // ✅ CORRECT: THESE ARE NOW THEIR OWN SEPARATE METHODS ✅
   getDrafts: () => ipcRenderer.invoke("system:get-drafts"),
   saveDrafts: (drafts: any[]) => ipcRenderer.send("system:save-drafts", drafts),
+  onDraftsSaveFailed: (callback: (message: string) => void) => {
+    ipcRenderer.on("drafts:save-failed", (_event, message) => callback(message));
+  },
+  removeDraftsListeners: () => {
+    ipcRenderer.removeAllListeners("drafts:save-failed");
+  },
 
   // Add these inside contextBridge:
   getStorageUsage: () => ipcRenderer.invoke("system:get-storage-usage"),

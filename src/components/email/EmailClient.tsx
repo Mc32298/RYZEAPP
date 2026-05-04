@@ -44,6 +44,7 @@ import {
   type EmailSettings,
   getInitials,
 } from "./emailPreferences";
+import { toast } from "sonner";
 
 const SETTINGS_STORAGE_KEY = "email-client-settings";
 const ACCOUNTS_STORAGE_KEY = "email-client-accounts";
@@ -508,6 +509,14 @@ export function EmailClient() {
       window.electronAPI.saveDrafts(drafts);
     }
   }, [drafts, hasLoadedDrafts]);
+
+  useEffect(() => {
+    if (!window.electronAPI?.onDraftsSaveFailed) return;
+    window.electronAPI.onDraftsSaveFailed((message: string) => {
+      toast.warning(message, { duration: 6000 });
+    });
+    return () => window.electronAPI?.removeDraftsListeners?.();
+  }, []);
 
   const currentAccount =
     accounts.find((account) => account.id === currentAccountId) ??

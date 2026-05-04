@@ -14,7 +14,7 @@
 // =============================================================================
 import { autoUpdater } from "electron-updater";
 import * as electron from "electron";
-import "dotenv/config";
+import { config as loadDotenv } from "dotenv";
 import * as path from "path";
 import * as fs from "fs";
 import http from "http"; // Used for the local OAuth callback server
@@ -31,6 +31,12 @@ import { parseStoredAttachments, shouldUseLocalMessageBody } from "./mailBodyCac
 const electronApi =
   (electron as unknown as { default?: typeof electron }).default ?? electron;
 const { app, BrowserWindow, ipcMain, shell, safeStorage, dialog } = electronApi;
+
+// Load .env only in development — packaged builds use real env vars.
+// Prevents a rogue .env dropped next to the binary from hijacking OAuth config or API keys.
+if (!app.isPackaged) {
+  loadDotenv();
+}
 
 // Polyfill __filename / __dirname for ESM (not available natively in ES modules)
 const __filename = fileURLToPath(import.meta.url);
@@ -2972,14 +2978,14 @@ const draftsFilePath = path.join(app.getPath("userData"), "ryze-drafts.enc");
 
 ipcMain.handle("system:get-drafts", () => {
   try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      console.warn("Secure storage unavailable — drafts cannot be loaded.");
+      return [];
+    }
+
     if (!fs.existsSync(draftsFilePath)) return [];
 
     const encryptedData = fs.readFileSync(draftsFilePath);
-
-    if (!safeStorage.isEncryptionAvailable()) {
-      return JSON.parse(encryptedData.toString("utf8"));
-    }
-
     const decryptedData = safeStorage.decryptString(encryptedData);
     return JSON.parse(decryptedData);
   } catch (error) {
@@ -2989,15 +2995,19 @@ ipcMain.handle("system:get-drafts", () => {
 });
 
 ipcMain.on("system:save-drafts", (_event, drafts) => {
+  if (!safeStorage.isEncryptionAvailable()) {
+    console.error("Secure storage unavailable — drafts will not be saved to disk.");
+    const windows = BrowserWindow.getAllWindows();
+    if (windows.length > 0) {
+      windows[0].webContents.send("drafts:save-failed", "Secure storage is unavailable on this system. Drafts cannot be saved.");
+    }
+    return;
+  }
+
   try {
     const payload = JSON.stringify(drafts);
-
-    if (!safeStorage.isEncryptionAvailable()) {
-      fs.writeFileSync(draftsFilePath, payload, "utf8");
-    } else {
-      const encryptedData = safeStorage.encryptString(payload);
-      fs.writeFileSync(draftsFilePath, encryptedData);
-    }
+    const encryptedData = safeStorage.encryptString(payload);
+    fs.writeFileSync(draftsFilePath, encryptedData);
   } catch (error) {
     console.error("Failed to securely save drafts:", error);
   }
@@ -3423,6 +3433,15 @@ ipcMain.handle("microsoft-oauth:connect", async () => {
   const authCode = await new Promise<string>((resolve, reject) => {
     const server = http.createServer((req, res) => {
       if (!req.url) return;
+
+      // Reject requests whose Host header doesn't exactly match our loopback address.
+      // Prevents DNS-rebinding attacks where a malicious page tries to hit this server.
+      const expectedHost = `${redirect.hostname}:${redirect.port}`;
+      if (req.headers.host !== expectedHost) {
+        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Bad request.");
+        return;
+      }
 
       const requestUrl = new URL(req.url, redirectUri);
 
@@ -4254,6 +4273,12 @@ ipcMain.handle("microsoft-mail:move", async (_event, payload) => {
 // =============================================================================
 
 app.whenReady().then(() => {
+  // Deny all permission requests (notifications, geolocation, media, etc.)
+  // The app has no legitimate need for any of these.
+  electron.session.defaultSession.setPermissionRequestHandler(
+    (_webContents, _permission, callback) => callback(false),
+  );
+
   createWindow();
 
   // Check for updates a few seconds after startup
