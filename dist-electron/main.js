@@ -12272,7 +12272,9 @@ Xe.whenReady().then(() => {
   ), on.session.defaultSession.setPermissionRequestHandler(
     (e, t, r) => r(!1)
   ), Ru(), Xe.isPackaged && setTimeout(() => {
-    mt.autoUpdater.checkForUpdates();
+    mt.autoUpdater.checkForUpdates().catch((e) => {
+      console.error("[updater] Startup check failed:", e?.message ?? e);
+    });
   }, 5e3);
 });
 Xe.on("window-all-closed", () => {

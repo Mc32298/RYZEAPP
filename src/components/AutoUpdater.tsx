@@ -23,6 +23,7 @@ export function useUpdater() {
 }
 
 type ElectronUpdaterAPI = {
+  checkUpdates?: () => void;
   onUpdateAvailable?: (callback: (version: string) => void) => void;
   onUpdateDownloaded?: (callback: () => void) => void;
   onUpdateError?: (callback: (message: string) => void) => void;
@@ -39,6 +40,10 @@ export function UpdaterProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!electronAPI?.onUpdateAvailable) return;
+
+    // Trigger the check from the renderer so we don't depend on
+    // the main-process 5-second timeout racing with listener setup
+    electronAPI.checkUpdates?.();
 
     electronAPI.onUpdateAvailable(() => {
       setStatus("available");

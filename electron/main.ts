@@ -4475,10 +4475,12 @@ app.whenReady().then(() => {
 
   createWindow();
 
-  // Check for updates a few seconds after startup
+  // Check for updates a few seconds after startup so the window is ready
   if (app.isPackaged) {
     setTimeout(() => {
-      autoUpdater.checkForUpdates();
+      autoUpdater.checkForUpdates().catch((err) => {
+        console.error("[updater] Startup check failed:", err?.message ?? err);
+      });
     }, 5000);
   }
 });
