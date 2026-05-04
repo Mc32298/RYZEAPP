@@ -40,6 +40,15 @@ pre, code { white-space: pre-wrap; }
 </html>`;
 }
 
+function isOpenableEmailLink(href: string): boolean {
+  try {
+    const parsed = new URL(href, window.location.origin);
+    return parsed.protocol === "https:" || parsed.protocol === "mailto:";
+  } catch {
+    return false;
+  }
+}
+
 export function SandboxedEmailFrame({
   html,
   isDarkMode,
@@ -64,6 +73,7 @@ export function SandboxedEmailFrame({
       // Let in-page fragment links be (they scroll within the fixed-height iframe)
       if (!href || href.startsWith("#")) return;
       e.preventDefault();
+      if (!isOpenableEmailLink(href)) return;
       // window.open is caught by Electron's setWindowOpenHandler which calls
       // shell.openExternal for https: / mailto: and denies everything else.
       window.open(href);

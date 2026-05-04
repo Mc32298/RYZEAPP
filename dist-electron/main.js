@@ -4,16 +4,16 @@ import require$$0 from "constants";
 import require$$0$1 from "stream";
 import require$$4$1 from "util";
 import require$$5 from "assert";
-import * as require$$1$1 from "path";
+import * as require$$1 from "path";
 import require$$1__default from "path";
-import require$$1$3 from "child_process";
+import require$$1$2 from "child_process";
 import require$$0$2 from "events";
 import crypto from "crypto";
-import require$$1$2 from "tty";
+import require$$1$1 from "tty";
 import require$$2 from "os";
 import require$$2$1, { fileURLToPath } from "url";
-import * as require$$1 from "electron";
-import require$$1__default$1 from "electron";
+import * as electron from "electron";
+import electron__default from "electron";
 import require$$14 from "zlib";
 import require$$4$2 from "http";
 import Database from "better-sqlite3";
@@ -3110,7 +3110,7 @@ function requireSupportsColor() {
   if (hasRequiredSupportsColor) return supportsColor_1;
   hasRequiredSupportsColor = 1;
   const os = require$$2;
-  const tty = require$$1$2;
+  const tty = require$$1$1;
   const hasFlag2 = requireHasFlag();
   const { env } = process;
   let forceColor;
@@ -3211,7 +3211,7 @@ function requireNode() {
   if (hasRequiredNode) return node.exports;
   hasRequiredNode = 1;
   (function(module, exports$1) {
-    const tty = require$$1$2;
+    const tty = require$$1$1;
     const util2 = require$$4$1;
     exports$1.init = init;
     exports$1.log = log;
@@ -11675,7 +11675,7 @@ function requireElectronAppAdapter() {
   const path = require$$1__default;
   const AppAdapter_1 = requireAppAdapter();
   let ElectronAppAdapter$1 = class ElectronAppAdapter {
-    constructor(app2 = require$$1__default$1.app) {
+    constructor(app2 = electron__default.app) {
       this.app = app2;
     }
     whenReady() {
@@ -11724,7 +11724,7 @@ function requireElectronHttpExecutor() {
     const builder_util_runtime_1 = requireOut();
     exports$1.NET_SESSION_NAME = "electron-updater";
     function getNetSession() {
-      return require$$1__default$1.session.fromPartition(exports$1.NET_SESSION_NAME, {
+      return electron__default.session.fromPartition(exports$1.NET_SESSION_NAME, {
         cache: false
       });
     }
@@ -11765,7 +11765,7 @@ function requireElectronHttpExecutor() {
         if (this.cachedSession == null) {
           this.cachedSession = getNetSession();
         }
-        const request = require$$1__default$1.net.request({
+        const request = electron__default.net.request({
           ...options,
           session: this.cachedSession
         });
@@ -13809,7 +13809,7 @@ function requireAppUpdater() {
         }
         void it.downloadPromise.then(() => {
           const notificationContent = AppUpdater2.formatDownloadNotification(it.updateInfo.version, this.app.name, downloadNotification);
-          new require$$1__default$1.Notification(notificationContent).show();
+          new electron__default.Notification(notificationContent).show();
         });
         return it;
       });
@@ -14221,7 +14221,7 @@ function requireBaseUpdater() {
   hasRequiredBaseUpdater = 1;
   Object.defineProperty(BaseUpdater, "__esModule", { value: true });
   BaseUpdater.BaseUpdater = void 0;
-  const child_process_1 = require$$1$3;
+  const child_process_1 = require$$1$2;
   const AppUpdater_1 = requireAppUpdater();
   let BaseUpdater$1 = class BaseUpdater extends AppUpdater_1.AppUpdater {
     constructor(options, app2) {
@@ -14234,7 +14234,7 @@ function requireBaseUpdater() {
       const isInstalled = this.install(isSilent, isSilent ? isForceRunAfter : this.autoRunAppAfterInstall);
       if (isInstalled) {
         setImmediate(() => {
-          require$$1__default$1.autoUpdater.emit("before-quit-for-update");
+          electron__default.autoUpdater.emit("before-quit-for-update");
           this.app.quit();
         });
       } else {
@@ -14397,7 +14397,7 @@ function requireAppImageUpdater() {
   Object.defineProperty(AppImageUpdater, "__esModule", { value: true });
   AppImageUpdater.AppImageUpdater = void 0;
   const builder_util_runtime_1 = requireOut();
-  const child_process_1 = require$$1$3;
+  const child_process_1 = require$$1$2;
   const fs_extra_1 = /* @__PURE__ */ requireLib();
   const fs_1 = fs__default;
   const path = require$$1__default;
@@ -14830,12 +14830,12 @@ function requireMacUpdater() {
   const http_1 = require$$4$2;
   const AppUpdater_1 = requireAppUpdater();
   const Provider_1 = requireProvider();
-  const child_process_1 = require$$1$3;
+  const child_process_1 = require$$1$2;
   const crypto_1 = crypto;
   let MacUpdater$1 = class MacUpdater extends AppUpdater_1.AppUpdater {
     constructor(options, app2) {
       super(options, app2);
-      this.nativeUpdater = require$$1__default$1.autoUpdater;
+      this.nativeUpdater = electron__default.autoUpdater;
       this.squirrelDownloadedUpdate = false;
       this.nativeUpdater.on("error", (it) => {
         this._logger.warn(it);
@@ -15066,7 +15066,7 @@ function requireWindowsExecutableCodeSignatureVerifier() {
   Object.defineProperty(windowsExecutableCodeSignatureVerifier, "__esModule", { value: true });
   windowsExecutableCodeSignatureVerifier.verifySignature = verifySignature;
   const builder_util_runtime_1 = requireOut();
-  const child_process_1 = require$$1$3;
+  const child_process_1 = require$$1$2;
   const os = require$$2;
   const path = require$$1__default;
   function preparePowerShellExec(command, timeout) {
@@ -15302,7 +15302,7 @@ function requireNsisUpdater() {
         if (errorCode === "UNKNOWN" || errorCode === "EACCES") {
           callUsingElevation();
         } else if (errorCode === "ENOENT") {
-          require$$1__default$1.shell.openPath(installerPath).catch((err) => this.dispatchError(err));
+          electron__default.shell.openPath(installerPath).catch((err) => this.dispatchError(err));
         } else {
           this.dispatchError(e);
         }
@@ -15444,8 +15444,7 @@ function requireMain$1() {
   })(main$2);
   return main$2;
 }
-var mainExports = requireMain$1();
-var config = {};
+var mainExports$1 = requireMain$1();
 var main = { exports: {} };
 const version = "16.6.1";
 const require$$4 = {
@@ -15659,7 +15658,7 @@ function requireMain() {
       return { parsed: parsedAll };
     }
   }
-  function config2(options) {
+  function config(options) {
     if (_dotenvKey(options).length === 0) {
       return DotenvModule.configDotenv(options);
     }
@@ -15726,7 +15725,7 @@ function requireMain() {
     configDotenv,
     _configVault,
     _parseVault,
-    config: config2,
+    config,
     decrypt,
     parse,
     populate
@@ -15741,70 +15740,7 @@ function requireMain() {
   main.exports = DotenvModule;
   return main.exports;
 }
-var envOptions;
-var hasRequiredEnvOptions;
-function requireEnvOptions() {
-  if (hasRequiredEnvOptions) return envOptions;
-  hasRequiredEnvOptions = 1;
-  const options = {};
-  if (process.env.DOTENV_CONFIG_ENCODING != null) {
-    options.encoding = process.env.DOTENV_CONFIG_ENCODING;
-  }
-  if (process.env.DOTENV_CONFIG_PATH != null) {
-    options.path = process.env.DOTENV_CONFIG_PATH;
-  }
-  if (process.env.DOTENV_CONFIG_QUIET != null) {
-    options.quiet = process.env.DOTENV_CONFIG_QUIET;
-  }
-  if (process.env.DOTENV_CONFIG_DEBUG != null) {
-    options.debug = process.env.DOTENV_CONFIG_DEBUG;
-  }
-  if (process.env.DOTENV_CONFIG_OVERRIDE != null) {
-    options.override = process.env.DOTENV_CONFIG_OVERRIDE;
-  }
-  if (process.env.DOTENV_CONFIG_DOTENV_KEY != null) {
-    options.DOTENV_KEY = process.env.DOTENV_CONFIG_DOTENV_KEY;
-  }
-  envOptions = options;
-  return envOptions;
-}
-var cliOptions;
-var hasRequiredCliOptions;
-function requireCliOptions() {
-  if (hasRequiredCliOptions) return cliOptions;
-  hasRequiredCliOptions = 1;
-  const re2 = /^dotenv_config_(encoding|path|quiet|debug|override|DOTENV_KEY)=(.+)$/;
-  cliOptions = function optionMatcher(args) {
-    const options = args.reduce(function(acc, cur) {
-      const matches = cur.match(re2);
-      if (matches) {
-        acc[matches[1]] = matches[2];
-      }
-      return acc;
-    }, {});
-    if (!("quiet" in options)) {
-      options.quiet = "true";
-    }
-    return options;
-  };
-  return cliOptions;
-}
-var hasRequiredConfig;
-function requireConfig() {
-  if (hasRequiredConfig) return config;
-  hasRequiredConfig = 1;
-  (function() {
-    requireMain().config(
-      Object.assign(
-        {},
-        requireEnvOptions(),
-        requireCliOptions()(process.argv)
-      )
-    );
-  })();
-  return config;
-}
-requireConfig();
+var mainExports = requireMain();
 function parseStoredAttachments(value) {
   try {
     const parsed = JSON.parse(value || "[]");
@@ -15826,11 +15762,14 @@ function shouldUseLocalMessageBody({
   }
   return parseStoredAttachments(attachmentsJson).length > 0;
 }
-const electronApi = require$$1.default ?? require$$1;
+const electronApi = electron.default ?? electron;
 const { app, BrowserWindow, ipcMain, shell, safeStorage, dialog } = electronApi;
+if (!app.isPackaged) {
+  mainExports.config();
+}
 const __filename$1 = fileURLToPath(import.meta.url);
-const __dirname$1 = require$$1$1.dirname(__filename$1);
-const dbPath = require$$1$1.join(app.getPath("userData"), "emails.db");
+const __dirname$1 = require$$1.dirname(__filename$1);
+const dbPath = require$$1.join(app.getPath("userData"), "emails.db");
 const db = new Database(dbPath);
 db.exec(`
   CREATE TABLE IF NOT EXISTS folders (
@@ -15918,13 +15857,13 @@ ensureColumn("folders", "path", "TEXT DEFAULT ''");
 ensureColumn("folders", "icon", "TEXT DEFAULT ''");
 ensureColumn("emails", "isStarred", "INTEGER DEFAULT 0");
 ensureColumn("emails", "attachments", "TEXT DEFAULT '[]'");
-const stateFilePath = require$$1$1.join(app.getPath("userData"), "window-state.json");
-const settingsFilePath = require$$1$1.join(app.getPath("userData"), "ryze-settings.json");
-const microsoftTokenFilePath = require$$1$1.join(
+const stateFilePath = require$$1.join(app.getPath("userData"), "window-state.json");
+const settingsFilePath = require$$1.join(app.getPath("userData"), "ryze-settings.json");
+const microsoftTokenFilePath = require$$1.join(
   app.getPath("userData"),
   "microsoft-oauth-tokens.json"
 );
-const aiProviderKeysFilePath = require$$1$1.join(
+const aiProviderKeysFilePath = require$$1.join(
   app.getPath("userData"),
   "ai-provider-keys.json"
 );
@@ -15950,29 +15889,29 @@ const allowedMoveDestinations = /* @__PURE__ */ new Set([
   "archive",
   "deleteditems"
 ]);
-mainExports.autoUpdater.autoDownload = false;
-mainExports.autoUpdater.autoInstallOnAppQuit = true;
+mainExports$1.autoUpdater.autoDownload = false;
+mainExports$1.autoUpdater.autoInstallOnAppQuit = true;
 ipcMain.handle("updater:check", () => {
   if (app.isPackaged) {
-    mainExports.autoUpdater.checkForUpdates();
+    mainExports$1.autoUpdater.checkForUpdates();
   }
   return true;
 });
 ipcMain.handle("updater:start-download", () => {
-  mainExports.autoUpdater.downloadUpdate();
+  mainExports$1.autoUpdater.downloadUpdate();
   return true;
 });
 ipcMain.handle("updater:install", () => {
-  mainExports.autoUpdater.quitAndInstall();
+  mainExports$1.autoUpdater.quitAndInstall();
   return true;
 });
-mainExports.autoUpdater.on("update-available", (info) => {
+mainExports$1.autoUpdater.on("update-available", (info) => {
   const windows = BrowserWindow.getAllWindows();
   if (windows.length > 0) {
     windows[0].webContents.send("updater:available", info.version);
   }
 });
-mainExports.autoUpdater.on("update-downloaded", () => {
+mainExports$1.autoUpdater.on("update-downloaded", () => {
   const windows = BrowserWindow.getAllWindows();
   if (windows.length > 0) {
     windows[0].webContents.send("updater:downloaded");
@@ -16284,6 +16223,9 @@ function loadBackendSettings() {
 function getGeminiApiVersion() {
   return process.env.GEMINI_API_VERSION?.trim() || "v1";
 }
+function sanitizeOutgoingHtml(html) {
+  return html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<iframe[\s\S]*?<\/iframe>/gi, "").replace(/<object[\s\S]*?<\/object>/gi, "").replace(/<embed[\s\S]*?>/gi, "").replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, "").replace(/(href|src|action)\s*=\s*["']?\s*(?:javascript|vbscript)\s*:[^"'>]*/gi, "");
+}
 function stripHtmlForAi(input) {
   return input.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/\s+/g, " ").trim();
 }
@@ -16336,6 +16278,41 @@ function validateAiEmailPayload(payload) {
     body: optionalString(payload?.body, "body", 5e5),
     preview: optionalString(payload?.preview, "preview", 5e3)
   };
+}
+function sanitizeBackendSettings(settings) {
+  const value = settings && typeof settings === "object" ? settings : {};
+  const aiProvider = optionalString(value.aiProvider, "aiProvider", 32).trim();
+  const geminiModel = optionalString(value.geminiModel, "geminiModel", 64).trim();
+  const ollamaBaseUrl = optionalString(value.ollamaBaseUrl, "ollamaBaseUrl", 512).trim();
+  const ollamaModel = optionalString(value.ollamaModel, "ollamaModel", 128).trim();
+  return {
+    aiProvider: aiProvider === "ollama" ? "ollama" : "gemini",
+    geminiModel: geminiModel || "gemini-2.5-flash",
+    ollamaBaseUrl: ollamaBaseUrl || "http://127.0.0.1:11434",
+    ollamaModel: ollamaModel || "llama3.2"
+  };
+}
+function sanitizeDraftsPayload(drafts) {
+  if (!Array.isArray(drafts)) {
+    throw new Error("drafts must be an array");
+  }
+  return drafts.slice(0, 20).map((draft, index) => {
+    const value = draft && typeof draft === "object" ? draft : {};
+    const id = optionalString(value.id, `drafts[${index}].id`, 128).trim();
+    return {
+      id: id || `draft-${crypto.randomUUID()}`,
+      to: optionalString(value.to, `drafts[${index}].to`, 4096),
+      cc: optionalString(value.cc, `drafts[${index}].cc`, 4096),
+      subject: optionalString(value.subject, `drafts[${index}].subject`, 512),
+      body: sanitizeOutgoingHtml(
+        optionalString(value.body, `drafts[${index}].body`, 5e5)
+      ),
+      isMinimized: Boolean(value.isMinimized),
+      isFullscreen: Boolean(value.isFullscreen),
+      aiTone: optionalString(value.aiTone, `drafts[${index}].aiTone`, 32) || void 0,
+      aiHint: optionalString(value.aiHint, `drafts[${index}].aiHint`, 2048) || void 0
+    };
+  });
 }
 function optionalString(value, fieldName, maxLength = 4096) {
   if (value === void 0 || value === null) {
@@ -16490,10 +16467,13 @@ function toBase64Url(value) {
   return base.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 function getMicrosoftOAuthEnv() {
-  const clientId = process.env.MICROSOFT_OAUTH_CLIENT_ID?.trim() || process.env.VITE_MICROSOFT_OAUTH_CLIENT_ID?.trim() || "b32a0e59-d61f-4655-981c-a18266e0af4f";
+  const clientId = process.env.MICROSOFT_OAUTH_CLIENT_ID?.trim() || process.env.VITE_MICROSOFT_OAUTH_CLIENT_ID?.trim();
   const tenantId = process.env.MICROSOFT_OAUTH_TENANT_ID?.trim() || "common";
   const redirectUri = process.env.MICROSOFT_OAUTH_REDIRECT_URI?.trim() || process.env.VITE_MICROSOFT_OAUTH_REDIRECT_URI?.trim() || "http://127.0.0.1:42813/auth/microsoft/callback";
   const scope = process.env.MICROSOFT_OAUTH_SCOPE?.trim() || "openid profile offline_access User.Read Mail.Read Mail.ReadWrite Mail.Send Calendars.Read";
+  if (!clientId) {
+    throw new Error("Missing MICROSOFT_OAUTH_CLIENT_ID");
+  }
   if (!/^[0-9a-fA-F-]{36}$/.test(clientId)) {
     throw new Error(
       "MICROSOFT_OAUTH_CLIENT_ID must be the Azure Application client ID GUID, not a client secret value"
@@ -16512,7 +16492,6 @@ function getMicrosoftOAuthEnv() {
   }
   return {
     clientId,
-    clientSecret: process.env.MICROSOFT_OAUTH_CLIENT_SECRET?.trim(),
     tenantId,
     redirectUri,
     scope
@@ -16598,7 +16577,7 @@ function getAiProviderKeyStatus(provider) {
     encryptionAvailable: safeStorage.isEncryptionAvailable()
   };
 }
-async function exchangeRefreshToken(refreshToken, clientId, clientSecret, tenantId, scope) {
+async function exchangeRefreshToken(refreshToken, clientId, tenantId, scope) {
   const authority = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0`;
   const refreshParams = new URLSearchParams({
     client_id: clientId,
@@ -16606,9 +16585,6 @@ async function exchangeRefreshToken(refreshToken, clientId, clientSecret, tenant
     refresh_token: refreshToken,
     scope
   });
-  if (clientSecret) {
-    refreshParams.set("client_secret", clientSecret);
-  }
   const refreshResponse = await fetch(`${authority}/token`, {
     method: "POST",
     headers: {
@@ -16626,7 +16602,7 @@ async function exchangeRefreshToken(refreshToken, clientId, clientSecret, tenant
 }
 const activeTokenRefreshPromises = /* @__PURE__ */ new Map();
 async function getValidMicrosoftAccessToken(accountId) {
-  const { clientId, clientSecret, tenantId, scope } = getMicrosoftOAuthEnv();
+  const { clientId, tenantId, scope } = getMicrosoftOAuthEnv();
   const tokens = loadMicrosoftTokens();
   const token = tokens[accountId];
   if (!token) throw new Error("No Microsoft token stored for this account");
@@ -16645,7 +16621,6 @@ async function getValidMicrosoftAccessToken(accountId) {
       const refreshed = await exchangeRefreshToken(
         token.refreshToken,
         clientId,
-        clientSecret,
         tenantId,
         scope
       );
@@ -17287,8 +17262,8 @@ function saveWindowState(win) {
 }
 function createWindow() {
   const windowState = loadWindowState();
-  const preloadPath = require$$1$1.resolve(__dirname$1, "preload.mjs");
-  const iconPath = app.isPackaged ? require$$1$1.join(__dirname$1, "../dist/logo.ico") : require$$1$1.join(__dirname$1, "../../public/logo.ico");
+  const preloadPath = require$$1.resolve(__dirname$1, "preload.mjs");
+  const iconPath = app.isPackaged ? require$$1.join(__dirname$1, "../dist/logo.ico") : require$$1.join(__dirname$1, "../../public/logo.ico");
   const win = new BrowserWindow({
     x: windowState.x,
     y: windowState.y,
@@ -17338,7 +17313,7 @@ function createWindow() {
   if (process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    win.loadFile(require$$1$1.resolve(__dirname$1, "../dist/index.html"));
+    win.loadFile(require$$1.resolve(__dirname$1, "../dist/index.html"));
   }
 }
 ipcMain.handle("ai:get-provider-key-status", (_event, payload) => {
@@ -17372,7 +17347,27 @@ ipcMain.handle("ai:delete-provider-key", (_event, payload) => {
   saveAiProviderKeys(keys);
   return getAiProviderKeyStatus(provider);
 });
+class RateLimiter {
+  constructor(maxCalls, windowMs) {
+    this.maxCalls = maxCalls;
+    this.windowMs = windowMs;
+  }
+  maxCalls;
+  windowMs;
+  timestamps = [];
+  allow() {
+    const now = Date.now();
+    this.timestamps = this.timestamps.filter((t) => now - t < this.windowMs);
+    if (this.timestamps.length >= this.maxCalls) return false;
+    this.timestamps.push(now);
+    return true;
+  }
+}
+const aiRateLimiter = new RateLimiter(10, 6e4);
 ipcMain.handle("ai:summarize-email", async (_event, payload) => {
+  if (!aiRateLimiter.allow()) {
+    throw new Error("Too many AI requests. Please wait a moment before summarising another email.");
+  }
   const email = validateAiEmailPayload(payload);
   const plainBody = limitAiInput(
     stripHtmlForAi(email.body || email.preview || "")
@@ -17628,7 +17623,11 @@ ipcMain.handle("system:get-storage-usage", () => {
   }
 });
 ipcMain.on("system:update-settings", (_event, settings) => {
-  fs$1.writeFileSync(settingsFilePath, JSON.stringify(settings, null, 2), "utf8");
+  const backendSettings = sanitizeBackendSettings(settings);
+  fs$1.writeFileSync(settingsFilePath, JSON.stringify(backendSettings, null, 2), {
+    encoding: "utf8",
+    mode: 384
+  });
 });
 ipcMain.handle("microsoft-mail:syncFolders", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
@@ -17647,14 +17646,15 @@ ipcMain.handle("microsoft-mail:syncFolders", async (_event, payload) => {
   }
   return await syncMailboxTargetedDelta(accountId, folderIds);
 });
-const draftsFilePath = require$$1$1.join(app.getPath("userData"), "ryze-drafts.enc");
+const draftsFilePath = require$$1.join(app.getPath("userData"), "ryze-drafts.enc");
 ipcMain.handle("system:get-drafts", () => {
   try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      console.warn("Secure storage unavailable — drafts cannot be loaded.");
+      return [];
+    }
     if (!fs$1.existsSync(draftsFilePath)) return [];
     const encryptedData = fs$1.readFileSync(draftsFilePath);
-    if (!safeStorage.isEncryptionAvailable()) {
-      return JSON.parse(encryptedData.toString("utf8"));
-    }
     const decryptedData = safeStorage.decryptString(encryptedData);
     return JSON.parse(decryptedData);
   } catch (error2) {
@@ -17663,16 +17663,27 @@ ipcMain.handle("system:get-drafts", () => {
   }
 });
 ipcMain.on("system:save-drafts", (_event, drafts) => {
-  try {
-    const payload = JSON.stringify(drafts);
-    if (!safeStorage.isEncryptionAvailable()) {
-      fs$1.writeFileSync(draftsFilePath, payload, "utf8");
-    } else {
-      const encryptedData = safeStorage.encryptString(payload);
-      fs$1.writeFileSync(draftsFilePath, encryptedData);
+  if (!safeStorage.isEncryptionAvailable()) {
+    console.error("Secure storage unavailable — drafts will not be saved to disk.");
+    const windows = BrowserWindow.getAllWindows();
+    if (windows.length > 0) {
+      windows[0].webContents.send("drafts:save-failed", "Secure storage is unavailable on this system. Drafts cannot be saved.");
     }
+    return;
+  }
+  try {
+    const payload = JSON.stringify(sanitizeDraftsPayload(drafts));
+    const encryptedData = safeStorage.encryptString(payload);
+    fs$1.writeFileSync(draftsFilePath, encryptedData, { mode: 384 });
   } catch (error2) {
     console.error("Failed to securely save drafts:", error2);
+    const windows = BrowserWindow.getAllWindows();
+    if (windows.length > 0) {
+      windows[0].webContents.send(
+        "drafts:save-failed",
+        "Drafts could not be saved due to an encryption error."
+      );
+    }
   }
 });
 ipcMain.handle("labels:create", (_event, payload) => {
@@ -17970,7 +17981,7 @@ ipcMain.on("window-close", (event) => {
   BrowserWindow.fromWebContents(event.sender)?.close();
 });
 ipcMain.handle("microsoft-oauth:connect", async () => {
-  const { clientId, clientSecret, tenantId, redirectUri, scope } = getMicrosoftOAuthEnv();
+  const { clientId, tenantId, redirectUri, scope } = getMicrosoftOAuthEnv();
   const verifier = toBase64Url(crypto.randomBytes(64));
   const challenge = toBase64Url(
     crypto.createHash("sha256").update(verifier).digest()
@@ -17993,6 +18004,12 @@ ipcMain.handle("microsoft-oauth:connect", async () => {
   const authCode = await new Promise((resolve, reject) => {
     const server = require$$4$2.createServer((req, res) => {
       if (!req.url) return;
+      const expectedHost = `${redirect.hostname}:${redirect.port}`;
+      if (req.headers.host !== expectedHost) {
+        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Bad request.");
+        return;
+      }
       const requestUrl = new URL(req.url, redirectUri);
       if (requestUrl.pathname !== redirect.pathname) {
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -18044,9 +18061,6 @@ ipcMain.handle("microsoft-oauth:connect", async () => {
     code_verifier: verifier,
     scope
   });
-  if (clientSecret) {
-    tokenParams.set("client_secret", clientSecret);
-  }
   const tokenResponse = await fetch(`${authority}/token`, {
     method: "POST",
     headers: {
@@ -18121,7 +18135,7 @@ ipcMain.handle("microsoft-mail:send", async (_event, payload) => {
       subject: subject || "(No subject)",
       body: {
         contentType: "html",
-        content: body || " "
+        content: sanitizeOutgoingHtml(body || " ")
       },
       toRecipients: parseRecipients(to),
       ccRecipients: parseRecipients(cc)
@@ -18581,11 +18595,52 @@ ipcMain.handle("microsoft-mail:move", async (_event, payload) => {
   }
   return { success: true };
 });
+const CSP_PROD = [
+  "default-src 'self'",
+  "script-src 'self'",
+  // unsafe-inline is required for React inline style props
+  "style-src 'self' 'unsafe-inline'",
+  // https: covers remote email images inside the sandboxed iframe
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'none'"
+].join("; ");
+const CSP_DEV = [
+  "default-src 'self' http://localhost:* ws://localhost:*",
+  "script-src 'self' http://localhost:* 'unsafe-eval' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' http://localhost:*",
+  "img-src 'self' data: blob: https: http://localhost:*",
+  "font-src 'self' data: http://localhost:*",
+  "connect-src 'self' ws://localhost:* http://localhost:*",
+  "frame-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'none'"
+].join("; ");
 app.whenReady().then(() => {
+  electron.session.defaultSession.webRequest.onHeadersReceived(
+    (details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          "Content-Security-Policy": [
+            app.isPackaged ? CSP_PROD : CSP_DEV
+          ]
+        }
+      });
+    }
+  );
+  electron.session.defaultSession.setPermissionRequestHandler(
+    (_webContents, _permission, callback) => callback(false)
+  );
   createWindow();
   if (app.isPackaged) {
     setTimeout(() => {
-      mainExports.autoUpdater.checkForUpdates();
+      mainExports$1.autoUpdater.checkForUpdates();
     }, 5e3);
   }
 });

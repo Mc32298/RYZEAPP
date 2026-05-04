@@ -64,6 +64,35 @@ function optionalHexColor(value, fieldName) {
   }
   return trimmed;
 }
+function sanitizeDrafts(drafts) {
+  if (!Array.isArray(drafts)) {
+    throw new TypeError("drafts must be an array");
+  }
+  return drafts.slice(0, 20).map((draft, index) => {
+    const value = draft && typeof draft === "object" ? draft : {};
+    return {
+      id: optionalString(value.id, `drafts[${index}].id`, 128),
+      to: optionalString(value.to, `drafts[${index}].to`, 4096),
+      cc: optionalString(value.cc, `drafts[${index}].cc`, 4096),
+      subject: optionalString(value.subject, `drafts[${index}].subject`, 512),
+      body: optionalString(value.body, `drafts[${index}].body`, 5e5),
+      isMinimized: Boolean(value.isMinimized),
+      isFullscreen: Boolean(value.isFullscreen),
+      aiTone: optionalString(value.aiTone, `drafts[${index}].aiTone`, 32),
+      aiHint: optionalString(value.aiHint, `drafts[${index}].aiHint`, 2048)
+    };
+  });
+}
+function sanitizeBackendSettings(settings) {
+  const value = settings && typeof settings === "object" ? settings : {};
+  const aiProvider = optionalString(value.aiProvider, "aiProvider", 32).trim();
+  return {
+    aiProvider: aiProvider === "ollama" ? "ollama" : "gemini",
+    geminiModel: optionalString(value.geminiModel, "geminiModel", 64).trim() || "gemini-2.5-flash",
+    ollamaBaseUrl: optionalString(value.ollamaBaseUrl, "ollamaBaseUrl", 512).trim() || "http://127.0.0.1:11434",
+    ollamaModel: optionalString(value.ollamaModel, "ollamaModel", 128).trim() || "llama3.2"
+  };
+}
 contextBridge.exposeInMainWorld("electronAPI", {
   minimizeWindow: () => ipcRenderer.send("window-minimize"),
   maximizeWindow: () => ipcRenderer.send("window-maximize"),
@@ -99,10 +128,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   // ✅ CORRECT: THESE ARE NOW THEIR OWN SEPARATE METHODS ✅
   getDrafts: () => ipcRenderer.invoke("system:get-drafts"),
-  saveDrafts: (drafts) => ipcRenderer.send("system:save-drafts", drafts),
+  saveDrafts: (drafts) => ipcRenderer.send("system:save-drafts", sanitizeDrafts(drafts)),
+  onDraftsSaveFailed: (callback) => {
+    ipcRenderer.on("drafts:save-failed", (_event, message) => callback(message));
+  },
+  removeDraftsListeners: () => {
+    ipcRenderer.removeAllListeners("drafts:save-failed");
+  },
   // Add these inside contextBridge:
   getStorageUsage: () => ipcRenderer.invoke("system:get-storage-usage"),
-  updateBackendSettings: (settings) => ipcRenderer.send("system:update-settings", settings),
+  updateBackendSettings: (settings) => ipcRenderer.send("system:update-settings", sanitizeBackendSettings(settings)),
   syncMicrosoftFolders: (accountId, folderIds) => ipcRenderer.invoke("microsoft-mail:syncFolders", {
     accountId: assertString(accountId, "accountId", 256),
     folderIds: Array.isArray(folderIds) ? folderIds.map((folderId) => assertString(folderId, "folderId", 2048)) : []

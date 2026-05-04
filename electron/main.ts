@@ -948,6 +948,46 @@ function validateAiEmailPayload(payload: any) {
   };
 }
 
+function sanitizeBackendSettings(settings: unknown) {
+  const value = settings && typeof settings === "object" ? settings as Record<string, unknown> : {};
+  const aiProvider = optionalString(value.aiProvider, "aiProvider", 32).trim();
+  const geminiModel = optionalString(value.geminiModel, "geminiModel", 64).trim();
+  const ollamaBaseUrl = optionalString(value.ollamaBaseUrl, "ollamaBaseUrl", 512).trim();
+  const ollamaModel = optionalString(value.ollamaModel, "ollamaModel", 128).trim();
+
+  return {
+    aiProvider: aiProvider === "ollama" ? "ollama" : "gemini",
+    geminiModel: geminiModel || "gemini-2.5-flash",
+    ollamaBaseUrl: ollamaBaseUrl || "http://127.0.0.1:11434",
+    ollamaModel: ollamaModel || "llama3.2",
+  };
+}
+
+function sanitizeDraftsPayload(drafts: unknown) {
+  if (!Array.isArray(drafts)) {
+    throw new Error("drafts must be an array");
+  }
+
+  return drafts.slice(0, 20).map((draft, index) => {
+    const value = draft && typeof draft === "object" ? draft as Record<string, unknown> : {};
+    const id = optionalString(value.id, `drafts[${index}].id`, 128).trim();
+
+    return {
+      id: id || `draft-${crypto.randomUUID()}`,
+      to: optionalString(value.to, `drafts[${index}].to`, 4096),
+      cc: optionalString(value.cc, `drafts[${index}].cc`, 4096),
+      subject: optionalString(value.subject, `drafts[${index}].subject`, 512),
+      body: sanitizeOutgoingHtml(
+        optionalString(value.body, `drafts[${index}].body`, 500_000),
+      ),
+      isMinimized: Boolean(value.isMinimized),
+      isFullscreen: Boolean(value.isFullscreen),
+      aiTone: optionalString(value.aiTone, `drafts[${index}].aiTone`, 32) || undefined,
+      aiHint: optionalString(value.aiHint, `drafts[${index}].aiHint`, 2048) || undefined,
+    };
+  });
+}
+
 function optionalString(
   value: unknown,
   fieldName: string,
@@ -2972,9 +3012,11 @@ ipcMain.handle("system:get-storage-usage", () => {
 });
 
 ipcMain.on("system:update-settings", (_event, settings) => {
-  // We will save these settings to a file so the backend sync logic
-  // can use them later (e.g., stopping sync for old emails)
-  fs.writeFileSync(settingsFilePath, JSON.stringify(settings, null, 2), "utf8");
+  const backendSettings = sanitizeBackendSettings(settings);
+  fs.writeFileSync(settingsFilePath, JSON.stringify(backendSettings, null, 2), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
 });
 
 ipcMain.handle("microsoft-mail:syncFolders", async (_event, payload) => {
@@ -3035,9 +3077,9 @@ ipcMain.on("system:save-drafts", (_event, drafts) => {
   }
 
   try {
-    const payload = JSON.stringify(drafts);
+    const payload = JSON.stringify(sanitizeDraftsPayload(drafts));
     const encryptedData = safeStorage.encryptString(payload);
-    fs.writeFileSync(draftsFilePath, encryptedData);
+    fs.writeFileSync(draftsFilePath, encryptedData, { mode: 0o600 });
   } catch (error) {
     console.error("Failed to securely save drafts:", error);
     const windows = BrowserWindow.getAllWindows();
