@@ -336,6 +336,8 @@ autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 autoUpdater.logger = console;
 
+ipcMain.handle("app:get-version", () => app.getVersion());
+
 ipcMain.handle("updater:check", () => {
   if (app.isPackaged) {
     autoUpdater.checkForUpdates();

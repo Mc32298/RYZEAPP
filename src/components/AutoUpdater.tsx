@@ -1,18 +1,19 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Download, RefreshCw } from "lucide-react";
-import { toast } from "sonner";
+import { AlertCircle, Download, RefreshCw } from "lucide-react";
 
-type UpdaterStatus = "idle" | "available" | "downloading" | "ready";
+type UpdaterStatus = "idle" | "available" | "downloading" | "error" | "ready";
 
 type UpdaterContextValue = {
   status: UpdaterStatus;
+  errorMessage: string;
   startDownload: () => void;
   installUpdate: () => void;
 };
 
 const UpdaterContext = createContext<UpdaterContextValue>({
   status: "idle",
+  errorMessage: "",
   startDownload: () => {},
   installUpdate: () => {},
 });
@@ -32,6 +33,7 @@ type ElectronUpdaterAPI = {
 
 export function UpdaterProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<UpdaterStatus>("idle");
+  const [errorMessage, setErrorMessage] = useState("");
 
   const electronAPI = (window as any).electronAPI as ElectronUpdaterAPI;
 
@@ -47,7 +49,11 @@ export function UpdaterProvider({ children }: { children: React.ReactNode }) {
     });
 
     electronAPI.onUpdateError?.((message) => {
-      toast.error(`Update check failed: ${message}`);
+      setErrorMessage(message);
+      // Reset to available so the user can see the error and retry
+      setStatus("error");
+      // Auto-clear the error icon after 8 seconds and go back to available
+      setTimeout(() => setStatus("available"), 8000);
     });
 
     return () => {
@@ -56,6 +62,7 @@ export function UpdaterProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const startDownload = () => {
+    setErrorMessage("");
     electronAPI?.startUpdateDownload?.();
     setStatus("downloading");
   };
@@ -65,15 +72,15 @@ export function UpdaterProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <UpdaterContext.Provider value={{ status, startDownload, installUpdate }}>
+    <UpdaterContext.Provider value={{ status, errorMessage, startDownload, installUpdate }}>
       {children}
     </UpdaterContext.Provider>
   );
 }
 
-// Renders in the top bar — green download icon when available, spinner when downloading
+// Renders in the top bar
 export function UpdaterTopBarButton() {
-  const { status, startDownload } = useUpdater();
+  const { status, errorMessage, startDownload } = useUpdater();
 
   if (status === "idle" || status === "ready") return null;
 
@@ -81,7 +88,7 @@ export function UpdaterTopBarButton() {
     return (
       <div
         className="flex h-7 w-7 items-center justify-center rounded-[6px]"
-        title="Downloading update..."
+        title="Downloading update in the background..."
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
         <RefreshCw size={14} className="animate-spin" style={{ color: "#22c55e" }} />
@@ -89,6 +96,19 @@ export function UpdaterTopBarButton() {
     );
   }
 
+  if (status === "error") {
+    return (
+      <div
+        className="flex h-7 w-7 items-center justify-center rounded-[6px]"
+        title={`Update failed: ${errorMessage}`}
+        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      >
+        <AlertCircle size={14} style={{ color: "#f87171" }} />
+      </div>
+    );
+  }
+
+  // available
   return (
     <button
       onClick={startDownload}
@@ -101,7 +121,7 @@ export function UpdaterTopBarButton() {
   );
 }
 
-// Floating popup shown when the update is downloaded and ready to install
+// Floating popup shown when the update is ready to install
 export function UpdaterReadyModal() {
   const { status, installUpdate } = useUpdater();
 

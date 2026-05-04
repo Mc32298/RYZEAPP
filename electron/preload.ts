@@ -209,6 +209,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     });
   },
 
+  // --- APP INFO ---
+  getAppVersion: () => ipcRenderer.invoke("app:get-version"),
+
   // --- AUTO UPDATER ---
   checkUpdates: () => ipcRenderer.invoke("updater:check"),
   startUpdateDownload: () => ipcRenderer.invoke("updater:start-download"),

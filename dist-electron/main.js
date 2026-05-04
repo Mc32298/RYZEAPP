@@ -5207,21 +5207,21 @@ function sf() {
   }
   var g = 1, q = 2, P = 3, _e = 4, Te = 5;
   function Oe(R, H, z, X, K, oe, re, se) {
-    var fe, ge = 0, De = null, Ue = !1, be = !1, Vt = X !== -1, st = -1, Ft = Ne(Ae(R, 0)) && Ce(Ae(R, R.length - 1));
+    var fe, Ee = 0, De = null, Ue = !1, be = !1, Vt = X !== -1, st = -1, Ft = Ne(Ae(R, 0)) && Ce(Ae(R, R.length - 1));
     if (H || re)
-      for (fe = 0; fe < R.length; ge >= 65536 ? fe += 2 : fe++) {
-        if (ge = Ae(R, fe), !de(ge))
+      for (fe = 0; fe < R.length; Ee >= 65536 ? fe += 2 : fe++) {
+        if (Ee = Ae(R, fe), !de(Ee))
           return Te;
-        Ft = Ft && Re(ge, De, se), De = ge;
+        Ft = Ft && Re(Ee, De, se), De = Ee;
       }
     else {
-      for (fe = 0; fe < R.length; ge >= 65536 ? fe += 2 : fe++) {
-        if (ge = Ae(R, fe), ge === f)
+      for (fe = 0; fe < R.length; Ee >= 65536 ? fe += 2 : fe++) {
+        if (Ee = Ae(R, fe), Ee === f)
           Ue = !0, Vt && (be = be || // Foldable line = too long, and not more-indented.
           fe - st - 1 > X && R[st + 1] !== " ", st = fe);
-        else if (!de(ge))
+        else if (!de(Ee))
           return Te;
-        Ft = Ft && Re(ge, De, se), De = ge;
+        Ft = Ft && Re(Ee, De, se), De = Ee;
       }
       be = be || Vt && fe - st - 1 > X && R[st + 1] !== " ";
     }
@@ -5234,8 +5234,8 @@ function sf() {
       if (!R.noCompatMode && (L.indexOf(H) !== -1 || j.test(H)))
         return R.quotingType === ee ? '"' + H + '"' : "'" + H + "'";
       var oe = R.indent * Math.max(1, z), re = R.lineWidth === -1 ? -1 : Math.max(Math.min(R.lineWidth, 40), R.lineWidth - oe), se = X || R.flowLevel > -1 && z >= R.flowLevel;
-      function fe(ge) {
-        return me(R, ge);
+      function fe(Ee) {
+        return me(R, Ee);
       }
       switch (Oe(
         H,
@@ -5276,9 +5276,9 @@ function sf() {
   }
   function c(R, H) {
     for (var z = /(\n+)([^\n]*)/g, X = (function() {
-      var ge = R.indexOf(`
+      var Ee = R.indexOf(`
 `);
-      return ge = ge !== -1 ? ge : R.length, z.lastIndex = ge, B(R.slice(0, ge), H);
+      return Ee = Ee !== -1 ? Ee : R.length, z.lastIndex = Ee, B(R.slice(0, Ee), H);
     })(), K = R[0] === `
 ` || R[0] === " ", oe, re; re = z.exec(R); ) {
       var se = re[1], fe = re[2];
@@ -5314,13 +5314,13 @@ function sf() {
     R.tag = oe, R.dump = K || "[]";
   }
   function ne(R, H, z) {
-    var X = "", K = R.tag, oe = Object.keys(z), re, se, fe, ge, De;
+    var X = "", K = R.tag, oe = Object.keys(z), re, se, fe, Ee, De;
     for (re = 0, se = oe.length; re < se; re += 1)
-      De = "", X !== "" && (De += ", "), R.condenseFlow && (De += '"'), fe = oe[re], ge = z[fe], R.replacer && (ge = R.replacer.call(z, fe, ge)), ue(R, H, fe, !1, !1) && (R.dump.length > 1024 && (De += "? "), De += R.dump + (R.condenseFlow ? '"' : "") + ":" + (R.condenseFlow ? "" : " "), ue(R, H, ge, !1, !1) && (De += R.dump, X += De));
+      De = "", X !== "" && (De += ", "), R.condenseFlow && (De += '"'), fe = oe[re], Ee = z[fe], R.replacer && (Ee = R.replacer.call(z, fe, Ee)), ue(R, H, fe, !1, !1) && (R.dump.length > 1024 && (De += "? "), De += R.dump + (R.condenseFlow ? '"' : "") + ":" + (R.condenseFlow ? "" : " "), ue(R, H, Ee, !1, !1) && (De += R.dump, X += De));
     R.tag = K, R.dump = "{" + X + "}";
   }
   function te(R, H, z, X) {
-    var K = "", oe = R.tag, re = Object.keys(z), se, fe, ge, De, Ue, be;
+    var K = "", oe = R.tag, re = Object.keys(z), se, fe, Ee, De, Ue, be;
     if (R.sortKeys === !0)
       re.sort();
     else if (typeof R.sortKeys == "function")
@@ -5328,7 +5328,7 @@ function sf() {
     else if (R.sortKeys)
       throw new t("sortKeys must be a boolean or a function");
     for (se = 0, fe = re.length; se < fe; se += 1)
-      be = "", (!X || K !== "") && (be += ye(R, H)), ge = re[se], De = z[ge], R.replacer && (De = R.replacer.call(z, ge, De)), ue(R, H + 1, ge, !0, !0, !0) && (Ue = R.tag !== null && R.tag !== "?" || R.dump && R.dump.length > 1024, Ue && (R.dump && f === R.dump.charCodeAt(0) ? be += "?" : be += "? "), be += R.dump, Ue && (be += ye(R, H)), ue(R, H + 1, De, !0, Ue) && (R.dump && f === R.dump.charCodeAt(0) ? be += ":" : be += ": ", be += R.dump, K += be));
+      be = "", (!X || K !== "") && (be += ye(R, H)), Ee = re[se], De = z[Ee], R.replacer && (De = R.replacer.call(z, Ee, De)), ue(R, H + 1, Ee, !0, !0, !0) && (Ue = R.tag !== null && R.tag !== "?" || R.dump && R.dump.length > 1024, Ue && (R.dump && f === R.dump.charCodeAt(0) ? be += "?" : be += "? "), be += R.dump, Ue && (be += ye(R, H)), ue(R, H + 1, De, !0, Ue) && (R.dump && f === R.dump.charCodeAt(0) ? be += ":" : be += ": ", be += R.dump, K += be));
     R.tag = oe, R.dump = K || "{}";
   }
   function ae(R, H, z) {
@@ -5350,7 +5350,7 @@ function sf() {
   }
   function ue(R, H, z, X, K, oe, re) {
     R.tag = null, R.dump = z, ae(R, z, !1) || ae(R, z, !0);
-    var se = n.call(R.dump), fe = X, ge;
+    var se = n.call(R.dump), fe = X, Ee;
     X && (X = R.flowLevel < 0 || R.flowLevel > H);
     var De = se === "[object Object]" || se === "[object Array]", Ue, be;
     if (De && (Ue = R.duplicates.indexOf(z), be = Ue !== -1), (R.tag !== null && R.tag !== "?" || be || R.indent !== 2 && H > 0) && (K = !1), be && R.usedDuplicates[Ue])
@@ -5368,9 +5368,9 @@ function sf() {
         if (R.skipInvalid) return !1;
         throw new t("unacceptable kind of an object to dump " + se);
       }
-      R.tag !== null && R.tag !== "?" && (ge = encodeURI(
+      R.tag !== null && R.tag !== "?" && (Ee = encodeURI(
         R.tag[0] === "!" ? R.tag.slice(1) : R.tag
-      ).replace(/!/g, "%21"), R.tag[0] === "!" ? ge = "!" + ge : ge.slice(0, 18) === "tag:yaml.org,2002:" ? ge = "!!" + ge.slice(18) : ge = "!<" + ge + ">", R.dump = ge + " " + R.dump);
+      ).replace(/!/g, "%21"), R.tag[0] === "!" ? Ee = "!" + Ee : Ee.slice(0, 18) === "tag:yaml.org,2002:" ? Ee = "!!" + Ee.slice(18) : Ee = "!<" + Ee + ">", R.dump = Ee + " " + R.dump);
     }
     return !0;
   }
@@ -6539,7 +6539,7 @@ function Ff() {
       return D ? "Symbol(src)_1." + D : "";
     })(), Ie = ne.toString, he = RegExp(
       "^" + ae.call(ue).replace(Z, "\\$&").replace(/hasOwnProperty|(function).*?(?=\\\()| for .+?(?=\\\])/g, "$1.*?") + "$"
-    ), R = Ae ? Re.Buffer : void 0, H = Re.Symbol, z = Re.Uint8Array, X = ne.propertyIsEnumerable, K = ie.splice, oe = H ? H.toStringTag : void 0, re = Object.getOwnPropertySymbols, se = R ? R.isBuffer : void 0, fe = B(Object.keys, Object), ge = Yt(Re, "DataView"), De = Yt(Re, "Map"), Ue = Yt(Re, "Promise"), be = Yt(Re, "Set"), Vt = Yt(Re, "WeakMap"), st = Yt(Object, "create"), Ft = Ut(ge), Su = Ut(De), Iu = Ut(Ue), bu = Ut(be), Cu = Ut(Vt), Qo = H ? H.prototype : void 0, wn = Qo ? Qo.valueOf : void 0;
+    ), R = Ae ? Re.Buffer : void 0, H = Re.Symbol, z = Re.Uint8Array, X = ne.propertyIsEnumerable, K = ie.splice, oe = H ? H.toStringTag : void 0, re = Object.getOwnPropertySymbols, se = R ? R.isBuffer : void 0, fe = B(Object.keys, Object), Ee = Yt(Re, "DataView"), De = Yt(Re, "Map"), Ue = Yt(Re, "Promise"), be = Yt(Re, "Set"), Vt = Yt(Re, "WeakMap"), st = Yt(Object, "create"), Ft = Ut(Ee), Su = Ut(De), Iu = Ut(Ue), bu = Ut(be), Cu = Ut(Vt), Qo = H ? H.prototype : void 0, wn = Qo ? Qo.valueOf : void 0;
     function Lt(D) {
       var M = -1, J = D == null ? 0 : D.length;
       for (this.clear(); ++M < J; ) {
@@ -6860,7 +6860,7 @@ function Ff() {
         return X.call(D, M);
       }));
     } : gd, It = ir;
-    (ge && It(new ge(new ArrayBuffer(1))) != x || De && It(new De()) != y || Ue && It(Ue.resolve()) != N || be && It(new be()) != b || Vt && It(new Vt()) != _) && (It = function(D) {
+    (Ee && It(new Ee(new ArrayBuffer(1))) != x || De && It(new De()) != y || Ue && It(Ue.resolve()) != N || be && It(new be()) != b || Vt && It(new Vt()) != _) && (It = function(D) {
       var M = ir(D), J = M == A ? D.constructor : void 0, ce = J ? Ut(J) : "";
       if (ce)
         switch (ce) {
@@ -9858,7 +9858,7 @@ function Qf({
 }) {
   return e?.trim() ? t ? nu(r).length > 0 : !0 : !1;
 }
-const Zf = on.default ?? on, { app: Xe, BrowserWindow: ft, ipcMain: Ee, shell: iu, safeStorage: rt, dialog: eh } = Zf;
+const Zf = on.default ?? on, { app: Xe, BrowserWindow: ft, ipcMain: ge, shell: iu, safeStorage: rt, dialog: eh } = Zf;
 Xe.isPackaged || Jf.config();
 const th = wd(import.meta.url), nn = ct.dirname(th), ou = ct.join(Xe.getPath("userData"), "emails.db"), le = new vd(ou);
 le.exec(`
@@ -9967,9 +9967,10 @@ const Et = /* @__PURE__ */ new Map(), rh = 120 * 1e3, nh = 60 * 1e3, yt = 4, ih 
 mt.autoUpdater.autoDownload = !1;
 mt.autoUpdater.autoInstallOnAppQuit = !0;
 mt.autoUpdater.logger = console;
-Ee.handle("updater:check", () => (Xe.isPackaged && mt.autoUpdater.checkForUpdates(), !0));
-Ee.handle("updater:start-download", () => (mt.autoUpdater.downloadUpdate(), !0));
-Ee.handle("updater:install", () => (mt.autoUpdater.quitAndInstall(), !0));
+ge.handle("app:get-version", () => Xe.getVersion());
+ge.handle("updater:check", () => (Xe.isPackaged && mt.autoUpdater.checkForUpdates(), !0));
+ge.handle("updater:start-download", () => (mt.autoUpdater.downloadUpdate(), !0));
+ge.handle("updater:install", () => (mt.autoUpdater.quitAndInstall(), !0));
 mt.autoUpdater.on("update-available", (e) => {
   const t = ft.getAllWindows();
   t.length > 0 && t[0].webContents.send("updater:available", e.version);
@@ -11194,13 +11195,13 @@ function Ru() {
     xh(n);
   }), process.env.VITE_DEV_SERVER_URL ? n.loadURL(process.env.VITE_DEV_SERVER_URL) : n.loadFile(ct.resolve(nn, "../dist/index.html"));
 }
-Ee.handle("ai:get-provider-key-status", (e, t) => {
+ge.handle("ai:get-provider-key-status", (e, t) => {
   const r = Ke(t?.provider, "provider", 32);
   if (r !== "gemini")
     throw new Error("Unsupported AI provider");
   return Ko(r);
 });
-Ee.handle("ai:set-provider-key", (e, t) => {
+ge.handle("ai:set-provider-key", (e, t) => {
   const r = Ke(t?.provider, "provider", 32), n = Ke(t?.apiKey, "apiKey", 8192);
   if (r !== "gemini")
     throw new Error("Unsupported AI provider");
@@ -11210,7 +11211,7 @@ Ee.handle("ai:set-provider-key", (e, t) => {
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   }, hu(a), Ko(r);
 });
-Ee.handle("ai:delete-provider-key", (e, t) => {
+ge.handle("ai:delete-provider-key", (e, t) => {
   const r = Ke(t?.provider, "provider", 32);
   if (r !== "gemini")
     throw new Error("Unsupported AI provider");
@@ -11230,7 +11231,7 @@ class Uh {
   }
 }
 const kh = new Uh(10, 6e4);
-Ee.handle("ai:summarize-email", async (e, t) => {
+ge.handle("ai:summarize-email", async (e, t) => {
   if (!kh.allow())
     throw new Error("Too many AI requests. Please wait a moment before summarising another email.");
   const r = mh(t), n = pc(
@@ -11347,7 +11348,7 @@ Ee.handle("ai:summarize-email", async (e, t) => {
     ...mc(d)
   };
 });
-Ee.handle("microsoft-calendar:get-events", async (e, t) => {
+ge.handle("microsoft-calendar:get-events", async (e, t) => {
   const r = Fe(t?.accountId), n = await Ze(r), a = /* @__PURE__ */ new Date();
   a.setHours(0, 0, 0, 0);
   const s = /* @__PURE__ */ new Date();
@@ -11371,7 +11372,7 @@ Ee.handle("microsoft-calendar:get-events", async (e, t) => {
   }
   return (await f.json()).value || [];
 });
-Ee.handle("microsoft-mail:download-attachment", async (e, t) => {
+ge.handle("microsoft-mail:download-attachment", async (e, t) => {
   const r = Fe(t?.accountId), n = Pt(t?.messageId), a = Ke(
     t?.attachmentId,
     "attachmentId",
@@ -11404,7 +11405,7 @@ Ee.handle("microsoft-mail:download-attachment", async (e, t) => {
   }
   return Ge.writeFileSync(o, T.bytes), { success: !0, filePath: o };
 });
-Ee.handle("microsoft-mail:toggle-star", async (e, t) => {
+ge.handle("microsoft-mail:toggle-star", async (e, t) => {
   const r = Fe(t?.accountId), n = Pt(t?.messageId), a = !!t?.isStarred, s = await Ze(r), i = encodeURIComponent(n), f = await fetch(
     `https://graph.microsoft.com/v1.0/me/messages/${i}`,
     {
@@ -11433,7 +11434,7 @@ Ee.handle("microsoft-mail:toggle-star", async (e, t) => {
     "UPDATE emails SET isStarred = ? WHERE accountId = ? AND id = ?"
   ).run(a ? 1 : 0, r, n), { success: !0 };
 });
-Ee.handle("system:get-storage-usage", () => {
+ge.handle("system:get-storage-usage", () => {
   try {
     return {
       // Return size in GB
@@ -11443,14 +11444,14 @@ Ee.handle("system:get-storage-usage", () => {
     return { dbSizeGB: 0 };
   }
 });
-Ee.on("system:update-settings", (e, t) => {
+ge.on("system:update-settings", (e, t) => {
   const r = gh(t);
   Ge.writeFileSync(Ro, JSON.stringify(r, null, 2), {
     encoding: "utf8",
     mode: 384
   });
 });
-Ee.handle("microsoft-mail:syncFolders", async (e, t) => {
+ge.handle("microsoft-mail:syncFolders", async (e, t) => {
   const r = Fe(t?.accountId);
   if (Et.has(r))
     return Et.get(r);
@@ -11460,7 +11461,7 @@ Ee.handle("microsoft-mail:syncFolders", async (e, t) => {
   return a.length === 0 ? { success: !0 } : Jo(r) ? await yn(r) : await gu(r, a);
 });
 const No = ct.join(Xe.getPath("userData"), "ryze-drafts.enc");
-Ee.handle("system:get-drafts", () => {
+ge.handle("system:get-drafts", () => {
   try {
     if (!rt.isEncryptionAvailable())
       return console.warn("Secure storage unavailable — drafts cannot be loaded."), [];
@@ -11471,7 +11472,7 @@ Ee.handle("system:get-drafts", () => {
     return console.error("Failed to load encrypted drafts:", e), [];
   }
 });
-Ee.on("system:save-drafts", (e, t) => {
+ge.on("system:save-drafts", (e, t) => {
   if (!rt.isEncryptionAvailable()) {
     console.error("Secure storage unavailable — drafts will not be saved to disk.");
     const r = ft.getAllWindows();
@@ -11490,7 +11491,7 @@ Ee.on("system:save-drafts", (e, t) => {
     );
   }
 });
-Ee.handle("labels:create", (e, t) => {
+ge.handle("labels:create", (e, t) => {
   const r = Fe(t?.accountId), n = du(t?.name), a = yh(t?.color), s = (/* @__PURE__ */ new Date()).toISOString(), i = `label-${dt.randomUUID()}`;
   return le.prepare(
     `
@@ -11506,7 +11507,7 @@ Ee.handle("labels:create", (e, t) => {
     updatedAt: s
   };
 });
-Ee.handle("microsoft-folder:create", async (e, t) => {
+ge.handle("microsoft-folder:create", async (e, t) => {
   const r = Fe(t?.accountId), n = fu(t?.displayName), a = await Ze(r), s = await Ih(a, n), i = {
     ...s,
     depth: 0,
@@ -11548,7 +11549,7 @@ Ee.handle("microsoft-folder:create", async (e, t) => {
     path: i.path || i.displayName || n
   };
 });
-Ee.handle("microsoft-folder:rename", async (e, t) => {
+ge.handle("microsoft-folder:rename", async (e, t) => {
   const r = Fe(t?.accountId), n = nr(t?.folderId), a = fu(t?.displayName), s = le.prepare(
     `
       SELECT id, wellKnownName
@@ -11580,7 +11581,7 @@ Ee.handle("microsoft-folder:rename", async (e, t) => {
     `
   ).get(r, n);
 });
-Ee.handle("microsoft-folder:delete", async (e, t) => {
+ge.handle("microsoft-folder:delete", async (e, t) => {
   const r = Fe(t?.accountId), n = nr(t?.folderId), a = le.prepare(
     `
       SELECT id, wellKnownName
@@ -11622,7 +11623,7 @@ Ee.handle("microsoft-folder:delete", async (e, t) => {
     deletedFolderIds: i
   };
 });
-Ee.handle("microsoft-folder:empty", async (e, t) => {
+ge.handle("microsoft-folder:empty", async (e, t) => {
   const r = Fe(t?.accountId), n = nr(t?.folderId), a = le.prepare(
     `
     SELECT id, displayName, wellKnownName
@@ -11658,7 +11659,7 @@ Ee.handle("microsoft-folder:empty", async (e, t) => {
     affectedCount: f.affectedCount
   };
 });
-Ee.handle("microsoft-folder:set-icon", (e, t) => {
+ge.handle("microsoft-folder:set-icon", (e, t) => {
   const r = Fe(t?.accountId), n = nr(t?.folderId), a = vh(t?.icon);
   if (le.prepare(
     `
@@ -11676,7 +11677,7 @@ Ee.handle("microsoft-folder:set-icon", (e, t) => {
     `
   ).get(r, n);
 });
-Ee.handle("labels:rename", (e, t) => {
+ge.handle("labels:rename", (e, t) => {
   const r = Fe(t?.accountId), n = gn(t?.labelId), a = du(t?.name), s = (/* @__PURE__ */ new Date()).toISOString();
   if (le.prepare(
     `
@@ -11694,7 +11695,7 @@ Ee.handle("labels:rename", (e, t) => {
     `
   ).get(r, n);
 });
-Ee.handle("labels:assign-email", (e, t) => {
+ge.handle("labels:assign-email", (e, t) => {
   const r = Fe(t?.accountId), n = Pt(t?.messageId), a = gn(t?.labelId), s = (/* @__PURE__ */ new Date()).toISOString();
   if (!le.prepare(
     `
@@ -11719,17 +11720,17 @@ Ee.handle("labels:assign-email", (e, t) => {
   `
   ).run(r, n, a, s), { success: !0 };
 });
-Ee.on("window-minimize", (e) => {
+ge.on("window-minimize", (e) => {
   ft.fromWebContents(e.sender)?.minimize();
 });
-Ee.on("window-maximize", (e) => {
+ge.on("window-maximize", (e) => {
   const t = ft.fromWebContents(e.sender);
   t && (t.isMaximized() ? t.unmaximize() : t.maximize());
 });
-Ee.on("window-close", (e) => {
+ge.on("window-close", (e) => {
   ft.fromWebContents(e.sender)?.close();
 });
-Ee.handle("microsoft-oauth:connect", async () => {
+ge.handle("microsoft-oauth:connect", async () => {
   const { clientId: e, tenantId: t, redirectUri: r, scope: n } = zo(), a = _o(dt.randomBytes(64)), s = _o(
     dt.createHash("sha256").update(a).digest()
   ), i = _o(dt.randomBytes(32)), f = new URL(r), o = `https://login.microsoftonline.com/${t}/oauth2/v2.0`, h = new URL(`${o}/authorize`);
@@ -11840,13 +11841,13 @@ Ee.handle("microsoft-oauth:connect", async () => {
     }
   };
 });
-Ee.handle("microsoft-account:delete", async (e, t) => {
+ge.handle("microsoft-account:delete", async (e, t) => {
   const r = Fe(t?.accountId);
   le.prepare("DELETE FROM emails WHERE accountId = ?").run(r);
   const n = Dr();
   return n[r] && (delete n[r], Xo(n)), { success: !0 };
 });
-Ee.handle("microsoft-mail:send", async (e, t) => {
+ge.handle("microsoft-mail:send", async (e, t) => {
   const r = Fe(t?.accountId), n = Ke(t?.to, "to", 4096), a = qe(t?.cc, "cc", 4096), s = qe(t?.subject, "subject", 512), i = qe(t?.body, "body", 5e5), f = await Ze(r), o = {
     message: {
       subject: s || "(No subject)",
@@ -11872,7 +11873,7 @@ Ee.handle("microsoft-mail:send", async (e, t) => {
   }
   return { success: !0 };
 });
-Ee.handle("microsoft-mail:syncInbox", async (e, t) => {
+ge.handle("microsoft-mail:syncInbox", async (e, t) => {
   const r = Fe(t?.accountId);
   if (Et.has(r))
     return Et.get(r);
@@ -11888,11 +11889,11 @@ Ee.handle("microsoft-mail:syncInbox", async (e, t) => {
   })();
   return Et.set(r, n), n;
 });
-Ee.handle("labels:list", (e, t) => {
+ge.handle("labels:list", (e, t) => {
   const r = Fe(t?.accountId);
   return Fh(r);
 });
-Ee.handle("labels:delete", (e, t) => {
+ge.handle("labels:delete", (e, t) => {
   const r = Fe(t?.accountId), n = gn(t?.labelId);
   if (le.transaction(() => (le.prepare(
     `
@@ -11908,7 +11909,7 @@ Ee.handle("labels:delete", (e, t) => {
     throw new Error("Label not found");
   return { success: !0 };
 });
-Ee.handle("labels:remove-email", (e, t) => {
+ge.handle("labels:remove-email", (e, t) => {
   const r = Fe(t?.accountId), n = Pt(t?.messageId), a = gn(t?.labelId);
   return le.prepare(
     `
@@ -11917,7 +11918,7 @@ Ee.handle("labels:remove-email", (e, t) => {
   `
   ).run(r, n, a), { success: !0 };
 });
-Ee.handle("microsoft-mail:mark-read", async (e, t) => {
+ge.handle("microsoft-mail:mark-read", async (e, t) => {
   const r = Fe(t?.accountId), { messageId: n, isRead: a } = t;
   if (!n) throw new Error("Missing messageId");
   le.prepare(
@@ -11928,7 +11929,7 @@ Ee.handle("microsoft-mail:mark-read", async (e, t) => {
     (f) => console.error("Failed background sync for mark-read:", f)
   ), !0;
 });
-Ee.handle("microsoft-mail:mark-unread", async (e, t) => {
+ge.handle("microsoft-mail:mark-unread", async (e, t) => {
   const r = Fe(t?.accountId), n = Pt(t?.messageId), a = await Ze(r), s = encodeURIComponent(n), i = await fetch(
     `https://graph.microsoft.com/v1.0/me/messages/${s}`,
     {
@@ -11954,7 +11955,7 @@ Ee.handle("microsoft-mail:mark-unread", async (e, t) => {
     n
   ), { success: !0 };
 });
-Ee.handle("microsoft-mail:getAllLocal", () => {
+ge.handle("microsoft-mail:getAllLocal", () => {
   const e = le.prepare(
     "SELECT * FROM folders ORDER BY accountId, path COLLATE NOCASE ASC"
   ).all(), t = le.prepare(
@@ -11991,7 +11992,7 @@ Ee.handle("microsoft-mail:getAllLocal", () => {
   );
   return { folders: e, messagesByFolder: r, labels: n, labelsByMessageId: s };
 });
-Ee.handle("microsoft-mail:sync", async (e, t) => {
+ge.handle("microsoft-mail:sync", async (e, t) => {
   const r = Fe(t?.accountId);
   if (Et.has(r))
     return Et.get(r);
@@ -12004,13 +12005,13 @@ Ee.handle("microsoft-mail:sync", async (e, t) => {
   })();
   return Et.set(r, n), n;
 });
-Ee.handle("microsoft-mail:list", async (e, t) => {
+ge.handle("microsoft-mail:list", async (e, t) => {
   const r = Fe(t?.accountId);
   return _u(r) ? await Eu(r) : await yn(r), { messagesByFolder: Ph(r) };
 });
-Ee.removeHandler("microsoft-mail:get-body");
-Ee.removeHandler("microsoft-mail:get-body");
-Ee.handle("microsoft-mail:get-body", async (e, t) => {
+ge.removeHandler("microsoft-mail:get-body");
+ge.removeHandler("microsoft-mail:get-body");
+ge.handle("microsoft-mail:get-body", async (e, t) => {
   const r = Fe(t?.accountId), n = Pt(t?.messageId), a = le.prepare(
     `
       SELECT
@@ -12120,7 +12121,7 @@ Ee.handle("microsoft-mail:get-body", async (e, t) => {
     source: "graph"
   };
 });
-Ee.handle("microsoft-mail:move-to-folder", async (e, t) => {
+ge.handle("microsoft-mail:move-to-folder", async (e, t) => {
   const r = Fe(t?.accountId), n = Pt(t?.messageId), a = nr(t?.destinationFolderId);
   if (!le.prepare(
     `
@@ -12189,7 +12190,7 @@ Ee.handle("microsoft-mail:move-to-folder", async (e, t) => {
     destinationFolderId: a
   };
 });
-Ee.handle("microsoft-mail:move", async (e, t) => {
+ge.handle("microsoft-mail:move", async (e, t) => {
   const r = Fe(t?.accountId), n = Pt(t?.messageId), a = _h(
     t?.destinationFolder
   ), s = await Ze(r), i = encodeURIComponent(n), o = le.prepare(

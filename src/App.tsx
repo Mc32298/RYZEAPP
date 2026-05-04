@@ -1,5 +1,6 @@
 import { EmailClient } from "./components/email/EmailClient";
 import { UpdaterProvider, UpdaterReadyModal } from "./components/AutoUpdater";
+import { Toaster } from "./components/ui/sonner";
 
 function App() {
   return (
@@ -10,6 +11,7 @@ function App() {
         </div>
       </div>
       <UpdaterReadyModal />
+      <Toaster />
     </UpdaterProvider>
   );
 }

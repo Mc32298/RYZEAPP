@@ -442,6 +442,7 @@ export function EmailClient() {
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
   const [hasLoadedCalendar, setHasLoadedCalendar] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
 
   // --- TUTORIAL STATE ---
   const [tutorialStep, setTutorialStep] = useState<number>(() => {
@@ -458,6 +459,12 @@ export function EmailClient() {
       }
     }
   }, [tutorialStep, isSettingsOpen, accounts]);
+
+  useEffect(() => {
+    (window as any).electronAPI?.getAppVersion?.().then((v: string) => {
+      if (v) setAppVersion(v);
+    });
+  }, []);
 
   useEffect(() => {
     selectedEmailIdRef.current = selectedEmailId;
@@ -2455,7 +2462,7 @@ export function EmailClient() {
             RYZE
           </span>
           <span className="font-mono-jetbrains text-[11px] text-[var(--fg-3)]">
-            v0.4.2
+            {appVersion ? `v${appVersion}` : ""}
           </span>
         </div>
 
@@ -2886,7 +2893,7 @@ export function EmailClient() {
         </div>
         <div className="flex items-center gap-3">
           <span>~/ryze/db.sqlite · {emails.length}MB</span>
-          <span>v0.4.2</span>
+          {appVersion && <span>v{appVersion}</span>}
         </div>
       </div>
 
