@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Download, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 
 type UpdaterStatus = "idle" | "available" | "downloading" | "ready";
 
@@ -23,6 +24,7 @@ export function useUpdater() {
 type ElectronUpdaterAPI = {
   onUpdateAvailable?: (callback: (version: string) => void) => void;
   onUpdateDownloaded?: (callback: () => void) => void;
+  onUpdateError?: (callback: (message: string) => void) => void;
   removeUpdaterListeners?: () => void;
   startUpdateDownload?: () => void;
   installUpdate?: () => void;
@@ -42,6 +44,10 @@ export function UpdaterProvider({ children }: { children: React.ReactNode }) {
 
     electronAPI.onUpdateDownloaded?.(() => {
       setStatus("ready");
+    });
+
+    electronAPI.onUpdateError?.((message) => {
+      toast.error(`Update check failed: ${message}`);
     });
 
     return () => {

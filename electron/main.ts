@@ -334,6 +334,7 @@ const allowedMoveDestinations = new Set<GraphFolderKey>([
 // Disable auto-download so we can prompt the user first
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.logger = console;
 
 ipcMain.handle("updater:check", () => {
   if (app.isPackaged) {
@@ -364,6 +365,18 @@ autoUpdater.on("update-downloaded", () => {
   const windows = BrowserWindow.getAllWindows();
   if (windows.length > 0) {
     windows[0].webContents.send("updater:downloaded");
+  }
+});
+
+autoUpdater.on("update-not-available", () => {
+  console.log("[updater] No update available — already on latest version.");
+});
+
+autoUpdater.on("error", (err) => {
+  console.error("[updater] Error:", err.message);
+  const windows = BrowserWindow.getAllWindows();
+  if (windows.length > 0) {
+    windows[0].webContents.send("updater:error", err.message);
   }
 });
 

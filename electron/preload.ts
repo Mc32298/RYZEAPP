@@ -220,9 +220,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onUpdateDownloaded: (callback: () => void) => {
     ipcRenderer.on("updater:downloaded", () => callback());
   },
+  onUpdateError: (callback: (message: string) => void) => {
+    ipcRenderer.on("updater:error", (_event, message) => callback(message));
+  },
   removeUpdaterListeners: () => {
     ipcRenderer.removeAllListeners("updater:available");
     ipcRenderer.removeAllListeners("updater:downloaded");
+    ipcRenderer.removeAllListeners("updater:error");
   },
 
   // ✅ CORRECT: THESE ARE NOW THEIR OWN SEPARATE METHODS ✅
