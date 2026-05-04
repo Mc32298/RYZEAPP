@@ -1,14 +1,16 @@
 import { EmailClient } from "./components/email/EmailClient";
-import { AutoUpdater } from "./components/AutoUpdater";
+import { UpdaterProvider, UpdaterReadyModal } from "./components/AutoUpdater";
 
 function App() {
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-[var(--bg-0)]">
-      <div className="relative flex-1 overflow-hidden">
-        <EmailClient />
+    <UpdaterProvider>
+      <div className="flex h-screen flex-col overflow-hidden bg-[var(--bg-0)]">
+        <div className="relative flex-1 overflow-hidden">
+          <EmailClient />
+        </div>
       </div>
-      <AutoUpdater />
-    </div>
+      <UpdaterReadyModal />
+    </UpdaterProvider>
   );
 }
 

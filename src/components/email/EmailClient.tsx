@@ -56,6 +56,7 @@ import {
   getInitials,
 } from "./emailPreferences";
 import { toast } from "sonner";
+import { UpdaterTopBarButton } from "@/components/AutoUpdater";
 
 const SETTINGS_STORAGE_KEY = "email-client-settings";
 const ACCOUNTS_STORAGE_KEY = "email-client-accounts";
@@ -2501,6 +2502,7 @@ export function EmailClient() {
           <button className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]">
             <MessageSquare size={14} />
           </button>
+          <UpdaterTopBarButton />
           <button
             onClick={() => setIsSettingsOpen(true)}
             className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
