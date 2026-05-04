@@ -213,7 +213,6 @@ interface GraphMailFolderListResponse {
 
 interface MicrosoftOAuthEnv {
   clientId: string;
-  clientSecret?: string;
   tenantId: string;
   redirectUri: string;
   scope: string;
@@ -838,6 +837,25 @@ function getGeminiApiVersion() {
   return process.env.GEMINI_API_VERSION?.trim() || "v1";
 }
 
+/**
+ * Server-side defense-in-depth strip for outgoing email HTML.
+ * The renderer's ComposeDrawer already runs DOMPurify, so this catches anything
+ * that slips through a compromised renderer before it reaches Microsoft Graph.
+ * We only need to kill executable content — legitimate formatting must survive.
+ */
+function sanitizeOutgoingHtml(html: string): string {
+  return html
+    // Remove executable tags entirely (including their content)
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
+    .replace(/<object[\s\S]*?<\/object>/gi, "")
+    .replace(/<embed[\s\S]*?>/gi, "")
+    // Strip inline event handlers (on* attributes)
+    .replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, "")
+    // Strip javascript: / vbscript: from href/src/action
+    .replace(/(href|src|action)\s*=\s*["']?\s*(?:javascript|vbscript)\s*:[^"'>]*/gi, "");
+}
+
 function stripHtmlForAi(input: string) {
   return input
     .replace(/<script[\s\S]*?<\/script>/gi, "")
@@ -1187,18 +1205,14 @@ function toBase64Url(value: Buffer | string) {
  * Optional:
  *   MICROSOFT_OAUTH_TENANT_ID   (defaults to 'common')
  *   MICROSOFT_OAUTH_SCOPE       (defaults to openid + mail scopes)
- *   MICROSOFT_OAUTH_CLIENT_SECRET
  */
 function getMicrosoftOAuthEnv(): MicrosoftOAuthEnv {
-  // 👇 Drop your actual Client ID right here
   const clientId =
     process.env.MICROSOFT_OAUTH_CLIENT_ID?.trim() ||
-    process.env.VITE_MICROSOFT_OAUTH_CLIENT_ID?.trim() ||
-    "b32a0e59-d61f-4655-981c-a18266e0af4f";
+    process.env.VITE_MICROSOFT_OAUTH_CLIENT_ID?.trim();
 
   const tenantId = process.env.MICROSOFT_OAUTH_TENANT_ID?.trim() || "common";
 
-  // 👇 Drop your actual Redirect URI right here
   const redirectUri =
     process.env.MICROSOFT_OAUTH_REDIRECT_URI?.trim() ||
     process.env.VITE_MICROSOFT_OAUTH_REDIRECT_URI?.trim() ||
@@ -1241,7 +1255,6 @@ function getMicrosoftOAuthEnv(): MicrosoftOAuthEnv {
 
   return {
     clientId,
-    clientSecret: process.env.MICROSOFT_OAUTH_CLIENT_SECRET?.trim(),
     tenantId,
     redirectUri,
     scope,
@@ -1369,7 +1382,6 @@ function getAiProviderKeyStatus(provider: AiProvider) {
 async function exchangeRefreshToken(
   refreshToken: string,
   clientId: string,
-  clientSecret: string | undefined,
   tenantId: string,
   scope: string,
 ) {
@@ -1380,10 +1392,6 @@ async function exchangeRefreshToken(
     refresh_token: refreshToken,
     scope,
   });
-
-  if (clientSecret) {
-    refreshParams.set("client_secret", clientSecret);
-  }
 
   const refreshResponse = await fetch(`${authority}/token`, {
     method: "POST",
@@ -1413,7 +1421,7 @@ async function exchangeRefreshToken(
 const activeTokenRefreshPromises = new Map<string, Promise<string>>();
 
 async function getValidMicrosoftAccessToken(accountId: string) {
-  const { clientId, clientSecret, tenantId, scope } = getMicrosoftOAuthEnv();
+  const { clientId, tenantId, scope } = getMicrosoftOAuthEnv();
   const tokens = loadMicrosoftTokens();
   const token = tokens[accountId];
 
@@ -1436,7 +1444,6 @@ async function getValidMicrosoftAccessToken(accountId: string) {
       const refreshed = await exchangeRefreshToken(
         token.refreshToken!,
         clientId,
-        clientSecret,
         tenantId,
         scope,
       );
@@ -2598,7 +2605,30 @@ ipcMain.handle("ai:delete-provider-key", (_event, payload) => {
   return getAiProviderKeyStatus(provider);
 });
 
+// Simple sliding-window rate limiter for AI calls.
+// Prevents a bug or runaway UI loop from burning through the user's API key.
+class RateLimiter {
+  private timestamps: number[] = [];
+  constructor(
+    private readonly maxCalls: number,
+    private readonly windowMs: number,
+  ) {}
+
+  allow(): boolean {
+    const now = Date.now();
+    this.timestamps = this.timestamps.filter((t) => now - t < this.windowMs);
+    if (this.timestamps.length >= this.maxCalls) return false;
+    this.timestamps.push(now);
+    return true;
+  }
+}
+
+const aiRateLimiter = new RateLimiter(10, 60_000); // 10 calls per minute
+
 ipcMain.handle("ai:summarize-email", async (_event, payload) => {
+  if (!aiRateLimiter.allow()) {
+    throw new Error("Too many AI requests. Please wait a moment before summarising another email.");
+  }
   const email = validateAiEmailPayload(payload);
 
   const plainBody = limitAiInput(
@@ -3404,7 +3434,7 @@ ipcMain.on("window-close", (event) => {
  *   5. Fetches the user's profile and stores everything encrypted
  */
 ipcMain.handle("microsoft-oauth:connect", async () => {
-  const { clientId, clientSecret, tenantId, redirectUri, scope } =
+  const { clientId, tenantId, redirectUri, scope } =
     getMicrosoftOAuthEnv();
 
   // PKCE: generate a random verifier and its SHA-256 challenge
@@ -3506,10 +3536,6 @@ ipcMain.handle("microsoft-oauth:connect", async () => {
     code_verifier: verifier,
     scope,
   });
-
-  if (clientSecret) {
-    tokenParams.set("client_secret", clientSecret);
-  }
 
   const tokenResponse = await fetch(`${authority}/token`, {
     method: "POST",
@@ -3626,7 +3652,7 @@ ipcMain.handle("microsoft-mail:send", async (_event, payload) => {
       subject: subject || "(No subject)",
       body: {
         contentType: "html",
-        content: body || " ",
+        content: sanitizeOutgoingHtml(body || " "),
       },
       toRecipients: parseRecipients(to),
       ccRecipients: parseRecipients(cc),
