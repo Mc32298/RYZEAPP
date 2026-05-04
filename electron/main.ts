@@ -226,6 +226,10 @@ interface MicrosoftStoredToken {
   expiresAt: number;
   scope: string;
   tokenType: string;
+  clientId?: string;
+  tenantId?: string;
+  redirectUri?: string;
+  oauthScope?: string;
 }
 
 interface GraphMessageAddress {
@@ -1301,6 +1305,48 @@ function getMicrosoftOAuthEnv(): MicrosoftOAuthEnv {
   };
 }
 
+function getMicrosoftOAuthRefreshConfig(
+  token: MicrosoftStoredToken,
+): Pick<MicrosoftOAuthEnv, "clientId" | "tenantId" | "scope"> {
+  const clientId = token.clientId?.trim();
+  const tenantId = token.tenantId?.trim();
+  const scope = token.oauthScope?.trim();
+
+  if (clientId && tenantId && scope) {
+    if (!/^[0-9a-fA-F-]{36}$/.test(clientId)) {
+      throw new Error(
+        "Stored Microsoft OAuth client ID is invalid. Please reconnect the account.",
+      );
+    }
+
+    return {
+      clientId,
+      tenantId,
+      scope,
+    };
+  }
+
+  try {
+    const env = getMicrosoftOAuthEnv();
+    return {
+      clientId: env.clientId,
+      tenantId: env.tenantId,
+      scope: env.scope,
+    };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "Missing MICROSOFT_OAUTH_CLIENT_ID"
+    ) {
+      throw new Error(
+        "Microsoft OAuth config is missing and this account token needs refresh. Please reconnect the account.",
+      );
+    }
+
+    throw error;
+  }
+}
+
 // =============================================================================
 // MICROSOFT TOKEN STORAGE
 // Tokens are encrypted at rest using Electron's safeStorage (OS keychain-backed).
@@ -1461,7 +1507,6 @@ async function exchangeRefreshToken(
 const activeTokenRefreshPromises = new Map<string, Promise<string>>();
 
 async function getValidMicrosoftAccessToken(accountId: string) {
-  const { clientId, tenantId, scope } = getMicrosoftOAuthEnv();
   const tokens = loadMicrosoftTokens();
   const token = tokens[accountId];
 
@@ -1481,6 +1526,8 @@ async function getValidMicrosoftAccessToken(accountId: string) {
 
   const refreshPromise = (async () => {
     try {
+      const { clientId, tenantId, scope } =
+        getMicrosoftOAuthRefreshConfig(token);
       const refreshed = await exchangeRefreshToken(
         token.refreshToken!,
         clientId,
@@ -1495,6 +1542,9 @@ async function getValidMicrosoftAccessToken(accountId: string) {
         expiresAt: Date.now() + refreshed.expires_in * 1000,
         scope: refreshed.scope || token.scope,
         tokenType: refreshed.token_type || token.tokenType,
+        clientId,
+        tenantId,
+        oauthScope: scope,
       };
       saveMicrosoftTokens(latestTokens);
       return latestTokens[accountId].accessToken;
@@ -3648,6 +3698,10 @@ ipcMain.handle("microsoft-oauth:connect", async () => {
     expiresAt: Date.now() + tokenPayload.expires_in * 1000,
     scope: tokenPayload.scope,
     tokenType: tokenPayload.token_type,
+    clientId,
+    tenantId,
+    redirectUri,
+    oauthScope: scope,
   };
 
   saveMicrosoftTokens(tokens);
