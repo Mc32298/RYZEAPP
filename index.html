@@ -2,26 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!--
-      Belt-and-suspenders CSP meta tag. The primary enforcement is done via
-      session.defaultSession.webRequest.onHeadersReceived in electron/main.ts,
-      which covers both file:// (prod) and http://localhost (dev) with different
-      policies. This meta tag provides a fallback for the production build only
-      and intentionally omits the dev relaxations (unsafe-eval, ws:, localhost).
-    -->
-    <meta http-equiv="Content-Security-Policy" content="
-      default-src 'self';
-      script-src 'self';
-      style-src 'self' 'unsafe-inline';
-      img-src 'self' data: blob: https:;
-      font-src 'self' data:;
-      connect-src 'self';
-      frame-src 'self';
-      object-src 'none';
-      base-uri 'self';
-      form-action 'none';
-    ">
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+<link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RYZE Mail</title>
   </head>
