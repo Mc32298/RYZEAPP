@@ -1,0 +1,2940 @@
+import { CalendarSidebar } from "./CalendarSidebar";
+import DOMPurify from "dompurify";
+import React, { useState, useEffect, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Sidebar } from "./Sidebar";
+import { MessageList } from "./MessageList";
+import { ReadingPane } from "./ReadingPane";
+import { ComposeDrawer, type ComposeDraft as Draft } from "./ComposeDrawer";
+import { SettingsModal } from "./SettingsModal";
+import type { AiTone } from "./readingInsights";
+import {
+  buildConversationThread,
+  buildThreadListRows,
+  threadRowMatchesFilters,
+} from "./threadView";
+import {
+  Sparkles,
+  ArrowRight,
+  CheckCircle2,
+  Forward,
+  MessageSquare,
+  Reply,
+  Settings2,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  EmailThread,
+  FolderType,
+  Account,
+  MailFolder,
+  EmailLabel,
+} from "@/types/email";
+
+import {
+  findDefaultInboxFolderId,
+  getInboxFolderIds,
+  getSentFolderIds,
+  getSystemFolderIds,
+} from "./folderHelpers";
+
+import {
+  DEFAULT_EMAIL_SETTINGS,
+  DEFAULT_PRIMARY_ACCOUNT,
+  type EmailSettings,
+  getInitials,
+} from "./emailPreferences";
+
+const SETTINGS_STORAGE_KEY = "email-client-settings";
+const ACCOUNTS_STORAGE_KEY = "email-client-accounts";
+const PROFILE_COLORS = ["#C9A84C", "#A9793D", "#5F7A52", "#B85A50", "#7C6546"];
+
+function loadStoredSettings(): EmailSettings {
+  if (typeof window === "undefined") {
+    return DEFAULT_EMAIL_SETTINGS;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return DEFAULT_EMAIL_SETTINGS;
+
+    const mergedSettings = {
+      ...DEFAULT_EMAIL_SETTINGS,
+      ...JSON.parse(raw),
+    };
+
+    if (mergedSettings.themeMode === "obsidian") {
+      mergedSettings.themeMode = "darkBlue";
+    } else if (mergedSettings.themeMode === "linen") {
+      mergedSettings.themeMode = "lightGold";
+    } else if (mergedSettings.themeMode === "system") {
+      mergedSettings.themeMode = "darkBlue";
+    }
+
+    return mergedSettings;
+  } catch {
+    return DEFAULT_EMAIL_SETTINGS;
+  }
+}
+
+function loadStoredAccounts(): Account[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(ACCOUNTS_STORAGE_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((account) => account?.provider === "microsoft");
+  } catch {
+    return [];
+  }
+}
+
+function getThemeAttribute(settings: EmailSettings) {
+  return settings.themeMode;
+}
+
+function formatSyncStatus(lastSyncedAt: Date | null) {
+  if (!lastSyncedAt) return "Not synced";
+
+  return `Synced ${lastSyncedAt.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+}
+
+function formatRelativeSync(lastSyncedAt: Date | null) {
+  if (!lastSyncedAt) return "sync pending";
+
+  const diffSeconds = Math.max(
+    0,
+    Math.round((Date.now() - lastSyncedAt.getTime()) / 1000),
+  );
+
+  if (diffSeconds < 5) return "synced just now";
+  if (diffSeconds < 60) return `synced ${diffSeconds}s ago`;
+
+  const diffMinutes = Math.round(diffSeconds / 60);
+  if (diffMinutes < 60) return `synced ${diffMinutes}m ago`;
+
+  const diffHours = Math.round(diffMinutes / 60);
+  return `synced ${diffHours}h ago`;
+}
+
+function getSyncCutoff(syncWindow: EmailSettings["syncWindow"]) {
+  const days = {
+    "30 days": 30,
+    "90 days": 90,
+    "1 year": 365,
+  }[syncWindow];
+
+  return Date.now() - days * 24 * 60 * 60 * 1000;
+}
+
+function getAutoDeleteCutoff(
+  autoDeleteTrash: EmailSettings["autoDeleteTrash"],
+) {
+  if (autoDeleteTrash === "never") return null;
+
+  const days = autoDeleteTrash === "30 days" ? 30 : 90;
+  return Date.now() - days * 24 * 60 * 60 * 1000;
+}
+
+function replaceEmailAddress(
+  addresses: string[] = [],
+  current: string,
+  next: string,
+) {
+  return addresses.map((address) => (address === current ? next : address));
+}
+
+function withSignature(body: string | undefined, signature: string) {
+  const trimmedSignature = signature.trim();
+  if (!trimmedSignature) {
+    return body ?? "";
+  }
+
+  if (!body || !body.trim()) {
+    return trimmedSignature;
+  }
+
+  return `${body.replace(/\s+$/, "")}\n\n${trimmedSignature}`;
+}
+
+function selectProfileColor(seed: string) {
+  const hash = seed
+    .toLowerCase()
+    .split("")
+    .reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return PROFILE_COLORS[hash % PROFILE_COLORS.length];
+}
+
+function htmlToPlainText(html: string) {
+  if (!html.trim()) return "";
+
+  if (typeof window === "undefined") {
+    return html;
+  }
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+
+  doc
+    .querySelectorAll("script, style, iframe, object, embed")
+    .forEach((element) => {
+      element.remove();
+    });
+
+  return (doc.body.textContent || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function formatQuotedReply(email: EmailThread) {
+  const originalText = htmlToPlainText(email.body || email.preview || "");
+
+  const sentAt = email.timestamp.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const quotedText = originalText
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n");
+
+  return [
+    "",
+    "",
+    `On ${sentAt}, ${email.sender.name} <${email.sender.email}> wrote:`,
+    quotedText || "> No readable message content.",
+  ].join("\n");
+}
+
+function plainTextToHtml(value: string) {
+  return escapeHtml(value).replace(/\r?\n/g, "<br/>");
+}
+
+function buildReplyHtml(email: EmailThread, signature: string) {
+  const sentAt = email.timestamp.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const signatureHtml = signature.trim()
+    ? `<div>${plainTextToHtml(signature.trim())}</div><br/>`
+    : "";
+
+  const originalBody = email.body?.trim()
+    ? email.body
+    : `<p>${plainTextToHtml(email.preview || "No readable message content.")}</p>`;
+
+  return `
+    <div><br/></div>
+    ${signatureHtml}
+    <div class="reply-quote" style="margin-top:16px;padding-left:12px;border-left:2px solid #777;color:#777;">
+      <div style="margin-bottom:8px;">
+        On ${plainTextToHtml(sentAt)}, ${plainTextToHtml(email.sender.name)} &lt;${plainTextToHtml(email.sender.email)}&gt; wrote:
+      </div>
+      ${originalBody}
+    </div>
+  `.trim();
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function toneHintFor(tone: AiTone) {
+  return {
+    short: "Keep this reply tight and direct.",
+    polite: "Use warm, respectful language.",
+    firm: "Be clear about deadlines and decisions.",
+    detailed: "Answer with full context.",
+    decline: "Say no without sounding abrupt.",
+    "follow-up": "Nudge for a response and restate the open loop.",
+  }[tone];
+}
+
+function parseStoredRecipients(value: unknown): string[] {
+  if (!value) return [];
+
+  const recipients =
+    typeof value === "string"
+      ? (() => {
+          try {
+            return JSON.parse(value);
+          } catch {
+            return [];
+          }
+        })()
+      : value;
+
+  if (!Array.isArray(recipients)) return [];
+
+  return recipients
+    .map((recipient: any) => recipient?.emailAddress?.address)
+    .filter(Boolean);
+}
+
+function toEmailThread(folderId: string, graphMessage: any): EmailThread {
+  const senderEmail =
+    graphMessage.from?.emailAddress?.address ||
+    graphMessage.sender?.emailAddress?.address ||
+    graphMessage.fromAddress ||
+    "unknown@outlook.com";
+
+  const senderName =
+    graphMessage.from?.emailAddress?.name ||
+    graphMessage.sender?.emailAddress?.name ||
+    graphMessage.fromName ||
+    senderEmail;
+
+  const bodyObj = graphMessage.body;
+
+  const bodyContent =
+    typeof bodyObj === "string"
+      ? bodyObj
+      : bodyObj?.content || graphMessage.bodyContent || "";
+
+  const contentType =
+    typeof bodyObj === "string"
+      ? "html"
+      : bodyObj?.contentType?.toLowerCase() ||
+        graphMessage.bodyContentType?.toLowerCase() ||
+        "";
+
+  const isHtml =
+    contentType === "html" ||
+    /<html|<body|<div|<p|<br|<table|<span/i.test(bodyContent);
+
+  const htmlBody = bodyContent
+    ? isHtml
+      ? bodyContent
+      : `<p>${escapeHtml(bodyContent).replace(/\n/g, "<br/>")}</p>`
+    : "";
+
+  return {
+    id: `${graphMessage.accountId || "unknown"}:${folderId}:${graphMessage.id}`,
+    accountId: graphMessage.accountId || "",
+    messageId: graphMessage.id,
+    conversationId:
+      graphMessage.conversationId || graphMessage.threadId || undefined,
+    internetMessageId:
+      graphMessage.internetMessageId ||
+      graphMessage.internet_message_id ||
+      undefined,
+    inReplyTo: graphMessage.inReplyTo || graphMessage.inReplyToId || undefined,
+    references: Array.isArray(graphMessage.references)
+      ? graphMessage.references
+      : typeof graphMessage.references === "string"
+        ? graphMessage.references.split(/\s+/).filter(Boolean)
+        : [],
+    sender: {
+      name: senderName,
+      email: senderEmail,
+      initials: getInitials(senderName || senderEmail),
+      color: selectProfileColor(senderEmail),
+    },
+    subject: graphMessage.subject || "(No subject)",
+    preview: graphMessage.bodyPreview || "",
+    body: htmlBody,
+    timestamp: graphMessage.receivedDateTime
+      ? new Date(graphMessage.receivedDateTime)
+      : new Date(),
+    isRead: Boolean(graphMessage.isRead),
+    isStarred: Boolean(graphMessage.isStarred),
+    folder: folderId,
+    folderId,
+    folderLabel:
+      graphMessage.folderDisplayName || graphMessage.folderName || folderId,
+    labels: [],
+    threadCount: 1,
+    hasAttachment: Boolean(graphMessage.hasAttachments),
+    attachments: (Array.isArray(graphMessage.attachments)
+      ? graphMessage.attachments
+      : []
+    )
+      .map((a: any) => ({
+        id: a.id,
+        filename: a.name || "Unknown File",
+        size: a.size || 0,
+        contentType: a.contentType || "application/octet-stream",
+        isInline: Boolean(a.isInline),
+        contentId: a.contentId || a.contentID || undefined,
+      })),
+    to: parseStoredRecipients(graphMessage.toRecipients),
+    cc: parseStoredRecipients(graphMessage.ccRecipients),
+  };
+}
+
+export function EmailClient() {
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [activeFolder, setActiveFolder] = useState<FolderType>("inbox");
+  const [emails, setEmails] = useState<EmailThread[]>([]);
+  const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
+  const [selectedEmailIds, setSelectedEmailIds] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
+  const [globalSearchDraft, setGlobalSearchDraft] = useState("");
+  const [globalSearchSelectedIndex, setGlobalSearchSelectedIndex] =
+    useState(0);
+  const [isGlobalSearchActionMenuOpen, setIsGlobalSearchActionMenuOpen] =
+    useState(false);
+  const [globalSearchActionIndex, setGlobalSearchActionIndex] = useState(0);
+  const globalSearchRef = React.useRef<HTMLInputElement>(null);
+  const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [hasLoadedDrafts, setHasLoadedDrafts] = useState(false);
+  const [accounts, setAccounts] = useState<Account[]>(loadStoredAccounts);
+  const [currentAccountId, setCurrentAccountId] = useState(
+    () => loadStoredAccounts()[0]?.id ?? DEFAULT_PRIMARY_ACCOUNT.id,
+  );
+  const [settings, setSettings] = useState<EmailSettings>(loadStoredSettings);
+  const [dbStorageGB, setDbStorageGB] = useState<number>(0);
+  const [isAppLoaded, setIsAppLoaded] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSessionLocked, setIsSessionLocked] = useState(false);
+  const [isConnectingMicrosoft, setIsConnectingMicrosoft] = useState(false);
+  const [connectMicrosoftError, setConnectMicrosoftError] = useState<
+    string | null
+  >(null);
+  const [mailSyncError, setMailSyncError] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [mailFolders, setMailFolders] = useState<MailFolder[]>([]);
+  const [initialSyncedAccountIds, setInitialSyncedAccountIds] = useState<
+    string[]
+  >([]);
+  const [emailLabels, setEmailLabels] = useState<EmailLabel[]>([]);
+  const [activeLabelId, setActiveLabelId] = useState<string | null>(null);
+  const activeFolderRef = React.useRef(activeFolder);
+  const selectedEmailIdRef = React.useRef<string | null>(selectedEmailId);
+  const mailFoldersRef = React.useRef<MailFolder[]>([]);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
+  const [hasLoadedCalendar, setHasLoadedCalendar] = useState(false);
+
+  // --- TUTORIAL STATE ---
+  const [tutorialStep, setTutorialStep] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    return window.localStorage.getItem("ryze_tutorial_done") ? 0 : 1;
+  });
+
+  // Watch for account connection to auto-advance tutorial
+  useEffect(() => {
+    if (tutorialStep === 2 && !isSettingsOpen) {
+      if (accounts.some((a) => a.provider === "microsoft")) {
+        const timer = setTimeout(() => setTutorialStep(3), 400);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [tutorialStep, isSettingsOpen, accounts]);
+
+  useEffect(() => {
+    selectedEmailIdRef.current = selectedEmailId;
+  }, [selectedEmailId]);
+
+  useEffect(() => {
+    activeFolderRef.current = activeFolder;
+  }, [activeFolder]);
+
+  useEffect(() => {
+    mailFoldersRef.current = mailFolders;
+  }, [mailFolders]);
+
+  useEffect(() => {
+    if (mailFolders.length === 0) return;
+
+    const isUnifiedFolder =
+      activeFolder === "all-inboxes" || activeFolder === "all-sent";
+
+    if (isUnifiedFolder) {
+      activeFolderRef.current = activeFolder;
+      return;
+    }
+
+    const activeFolderStillExists = mailFolders.some(
+      (folder) => folder.id === activeFolder,
+    );
+
+    if (activeFolderStillExists) return;
+
+    const nextActiveFolder = findDefaultInboxFolderId(mailFolders);
+
+    activeFolderRef.current = nextActiveFolder;
+    setActiveFolder(nextActiveFolder as FolderType);
+    setSelectedEmailId(null);
+  }, [mailFolders, activeFolder]);
+
+  useEffect(() => {
+    if (window.electronAPI?.getDrafts) {
+      window.electronAPI
+        .getDrafts()
+        .then((savedDrafts) => {
+          if (Array.isArray(savedDrafts) && savedDrafts.length > 0) {
+            setDrafts(savedDrafts);
+          }
+          setHasLoadedDrafts(true);
+        })
+        .catch((err) => {
+          console.error("Failed to load drafts:", err);
+          setHasLoadedDrafts(true);
+        });
+    } else {
+      setHasLoadedDrafts(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedDrafts) return;
+
+    if (window.electronAPI?.saveDrafts) {
+      window.electronAPI.saveDrafts(drafts);
+    }
+  }, [drafts, hasLoadedDrafts]);
+
+  const currentAccount =
+    accounts.find((account) => account.id === currentAccountId) ??
+    accounts[0] ??
+    DEFAULT_PRIMARY_ACCOUNT;
+
+  const themeAttribute = getThemeAttribute(settings);
+  const isAppDarkMode = themeAttribute !== "lightGold";
+  const syncCutoff = getSyncCutoff(settings.syncWindow);
+  const autoDeleteCutoff = getAutoDeleteCutoff(settings.autoDeleteTrash);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setIsAppLoaded(true), 100);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+
+    if (window.electronAPI?.updateBackendSettings) {
+      window.electronAPI.updateBackendSettings(settings);
+    }
+  }, [settings]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(accounts));
+  }, [accounts]);
+
+  useEffect(() => {
+    if (
+      settings.desktopAlerts &&
+      typeof window !== "undefined" &&
+      "Notification" in window &&
+      Notification.permission === "default"
+    ) {
+      Notification.requestPermission().catch(() => undefined);
+    }
+  }, [settings.desktopAlerts]);
+
+  useEffect(() => {
+    if (!settings.sessionLock) {
+      setIsSessionLocked(false);
+      return;
+    }
+
+    let timeoutId: number | undefined;
+    let throttleTimer: number | undefined;
+
+    const resetLockTimer = () => {
+      if (throttleTimer) return;
+
+      throttleTimer = window.setTimeout(() => {
+        throttleTimer = undefined;
+      }, 1000);
+
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => setIsSessionLocked(true), 45_000);
+    };
+
+    const handleBlur = () => setIsSessionLocked(true);
+
+    resetLockTimer();
+    window.addEventListener("mousemove", resetLockTimer);
+    window.addEventListener("mousedown", resetLockTimer);
+    window.addEventListener("keydown", resetLockTimer);
+    window.addEventListener("touchstart", resetLockTimer);
+    window.addEventListener("blur", handleBlur);
+
+    return () => {
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+      window.removeEventListener("mousemove", resetLockTimer);
+      window.removeEventListener("mousedown", resetLockTimer);
+      window.removeEventListener("keydown", resetLockTimer);
+      window.removeEventListener("touchstart", resetLockTimer);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, [settings.sessionLock]);
+
+  useEffect(() => {
+    if (
+      !accounts.some((account) => account.id === currentAccountId) &&
+      accounts[0]
+    ) {
+      setCurrentAccountId(accounts[0].id);
+    }
+  }, [accounts, currentAccountId]);
+
+  const fetchLocalAndSetUI = useCallback(async () => {
+    if (!window.electronAPI?.getAllLocalEmails) return;
+
+    try {
+      const result = await window.electronAPI.getAllLocalEmails();
+
+      const nextFolders = result.folders || [];
+      setMailFolders(nextFolders);
+      setEmailLabels(result.labels || []);
+
+      const currentActiveFolder = activeFolderRef.current;
+      const activeFolderExists = nextFolders.some(
+        (folder) => folder.id === currentActiveFolder,
+      );
+
+      if (
+        !activeFolderExists &&
+        nextFolders.length > 0 &&
+        currentActiveFolder !== "all-inboxes" &&
+        currentActiveFolder !== "all-sent"
+      ) {
+        activeFolderRef.current = "all-inboxes";
+        setActiveFolder("all-inboxes" as FolderType);
+      }
+
+      const labelsByMessageId = result.labelsByMessageId || {};
+
+      const folderAccountMap = new Map(
+        nextFolders.map((f) => [f.id, f.accountId]),
+      );
+
+      const mapped = Object.entries(result.messagesByFolder || {})
+        .flatMap(([folderId, messages]) => {
+          const ownerAccountId = folderAccountMap.get(folderId) || "";
+          return (messages as any[]).map((message) => {
+            message.accountId = ownerAccountId;
+            return {
+              ...toEmailThread(folderId, message),
+              labels: labelsByMessageId[message.id] || [],
+            };
+          });
+        })
+        .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+      setEmails((previousEmails) => {
+        const previousByMessageId = new Map(
+          previousEmails.map((email) => [email.messageId, email]),
+        );
+
+        return mapped.map((nextEmail) => {
+          const previousEmail = previousByMessageId.get(nextEmail.messageId);
+
+          if (
+            previousEmail?.body &&
+            previousEmail.id === selectedEmailIdRef.current
+          ) {
+            return { ...nextEmail, body: previousEmail.body };
+          }
+
+          return { ...nextEmail, body: nextEmail.body || "" };
+        });
+      });
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error("Failed to load local emails:", error);
+    }
+  }, []);
+
+  const silentlyRefreshMailboxUI = useCallback(async () => {
+    await fetchLocalAndSetUI();
+
+    if (window.electronAPI?.getStorageUsage) {
+      const usage = await window.electronAPI.getStorageUsage();
+      setDbStorageGB(usage.dbSizeGB);
+    }
+
+    setSelectedEmailIds((prev) => [...prev]);
+  }, [fetchLocalAndSetUI]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const syncAllAccounts = async () => {
+      setMailSyncError(null);
+
+      try {
+        await fetchLocalAndSetUI();
+        if (isCancelled) return;
+
+        const msAccounts = accounts.filter((a) => a.provider === "microsoft");
+        const accountsToSync = msAccounts.filter(
+          (a) => !initialSyncedAccountIds.includes(a.id),
+        );
+
+        if (
+          window.electronAPI?.syncMicrosoftEmails &&
+          accountsToSync.length > 0
+        ) {
+          for (const account of accountsToSync) {
+            try {
+              await window.electronAPI.syncMicrosoftEmails(account.id);
+              if (isCancelled) return;
+            } catch (error) {
+              console.error(`Initial sync failed for ${account.email}`, error);
+            }
+          }
+
+          if (!isCancelled) {
+            setInitialSyncedAccountIds((prev) => {
+              const newIds = accountsToSync
+                .map((a) => a.id)
+                .filter((id) => !prev.includes(id));
+              return [...prev, ...newIds];
+            });
+            await silentlyRefreshMailboxUI();
+          }
+        }
+      } catch (error) {
+        if (isCancelled) return;
+        setMailSyncError("Failed to initialize mailbox sync.");
+      }
+    };
+
+    syncAllAccounts();
+
+    let isSyncing = false;
+
+    const targetedInterval = setInterval(async () => {
+      if (isSyncing) return;
+      if (!window.electronAPI?.syncMicrosoftFolders) return;
+
+      try {
+        isSyncing = true;
+        const msAccounts = accounts.filter((a) => a.provider === "microsoft");
+
+        for (const account of msAccounts) {
+          if (isCancelled) break;
+          const currentFolders = mailFoldersRef.current.filter(
+            (f) => f.accountId === account.id,
+          );
+          const currentActiveFolder = activeFolderRef.current;
+
+          const inboxFolderId = findDefaultInboxFolderId(currentFolders);
+
+          const normalizedActiveFolder = currentFolders.some(
+            (folder) => folder.id === currentActiveFolder,
+          )
+            ? currentActiveFolder
+            : inboxFolderId;
+
+          const folderIdsToSync = Array.from(
+            new Set([inboxFolderId, normalizedActiveFolder].filter(Boolean)),
+          );
+
+          await window.electronAPI.syncMicrosoftFolders(
+            account.id,
+            folderIdsToSync,
+          );
+        }
+
+        if (!isCancelled) {
+          await silentlyRefreshMailboxUI();
+        }
+      } catch (e) {
+        console.error("Targeted folder sync failed", e);
+      } finally {
+        isSyncing = false;
+      }
+    }, 60000);
+
+    const fullInterval = setInterval(async () => {
+      if (isSyncing) return;
+      if (!window.electronAPI?.syncMicrosoftEmails) return;
+
+      try {
+        isSyncing = true;
+        const msAccounts = accounts.filter((a) => a.provider === "microsoft");
+
+        for (const account of msAccounts) {
+          if (isCancelled) break;
+          await window.electronAPI.syncMicrosoftEmails(account.id);
+        }
+
+        if (!isCancelled) {
+          await silentlyRefreshMailboxUI();
+        }
+      } catch (e) {
+        console.error("Full mailbox delta sync failed", e);
+      } finally {
+        isSyncing = false;
+      }
+    }, 900000);
+
+    return () => {
+      isCancelled = true;
+      clearInterval(targetedInterval);
+      clearInterval(fullInterval);
+    };
+  }, [
+    accounts,
+    fetchLocalAndSetUI,
+    silentlyRefreshMailboxUI,
+    initialSyncedAccountIds,
+  ]);
+
+  const activeMailFolder = mailFolders.find(
+    (folder) => folder.id === activeFolder,
+  );
+  const activeKnownFolder = activeMailFolder?.wellKnownName || "";
+
+  const folderEmails = emails.filter((email) => {
+    if (activeLabelId) {
+      return email.labels.some((label) => label.id === activeLabelId);
+    }
+
+    if (activeFolder === "all-inboxes") {
+      const inboxIds = getInboxFolderIds(mailFolders);
+      return inboxIds.has(email.folder);
+    }
+
+    if (activeFolder === "all-sent") {
+      const sentIds = getSentFolderIds(mailFolders);
+      return sentIds.has(email.folder);
+    }
+
+    if (email.folder !== activeFolder) return false;
+
+    const activeMailFolder = mailFolders.find(
+      (folder) => folder.id === activeFolder,
+    );
+    const activeKnownFolder = activeMailFolder?.wellKnownName || "";
+
+    if (
+      activeKnownFolder === "deleteditems" &&
+      autoDeleteCutoff &&
+      email.timestamp.getTime() < autoDeleteCutoff
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+
+  const selectedEmail =
+    folderEmails.find((email) => email.id === selectedEmailId) ??
+    emails.find(
+      (email) => email.id === selectedEmailId && email.folder === activeFolder,
+    ) ??
+    null;
+  const selectedConversation = selectedEmail
+    ? buildConversationThread(selectedEmail, emails)
+    : null;
+  const threadRows = React.useMemo(
+    () => buildThreadListRows(folderEmails),
+    [folderEmails],
+  );
+  const liveSearchRows = React.useMemo(
+    () =>
+      threadRows
+        .filter((row) =>
+          threadRowMatchesFilters(row, {
+            query: globalSearchDraft,
+            activeFilters: [],
+          }),
+        )
+        .slice(0, 8),
+    [threadRows, globalSearchDraft],
+  );
+  const selectedLiveSearchRow =
+    liveSearchRows[globalSearchSelectedIndex] ?? null;
+  const threadRowMessageIds = React.useMemo(
+    () =>
+      new Map(threadRows.map((row) => [row.latestMessage.id, row.messageIds])),
+    [threadRows],
+  );
+
+  useEffect(() => {
+    setGlobalSearchSelectedIndex(0);
+    setIsGlobalSearchActionMenuOpen(false);
+    setGlobalSearchActionIndex(0);
+  }, [globalSearchDraft]);
+
+  useEffect(() => {
+    if (globalSearchSelectedIndex >= liveSearchRows.length) {
+      setGlobalSearchSelectedIndex(Math.max(liveSearchRows.length - 1, 0));
+    }
+  }, [globalSearchSelectedIndex, liveSearchRows.length]);
+
+  useEffect(() => {
+    if (threadRows.length === 0) {
+      if (selectedEmailId) setSelectedEmailId(null);
+      return;
+    }
+
+    const selectedStillVisible = selectedEmailId
+      ? folderEmails.some((email) => email.id === selectedEmailId)
+      : false;
+
+    if (!selectedStillVisible) {
+      setSelectedEmailId(threadRows[0].latestMessage.id);
+    }
+  }, [folderEmails, selectedEmailId, threadRows]);
+
+  const systemFolderIds = getSystemFolderIds(mailFolders);
+
+  const unreadCounts = emails.reduce(
+    (acc, email) => {
+      if (!email.isRead) {
+        acc[email.folder] = (acc[email.folder] || 0) + 1;
+      }
+
+      return acc;
+    },
+    {} as Record<FolderType, number>,
+  );
+
+  const labelCounts = emails.reduce(
+    (acc, email) => {
+      for (const label of email.labels) {
+        acc[label.id] = (acc[label.id] || 0) + 1;
+      }
+
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
+
+  const activeLabel = activeLabelId
+    ? emailLabels.find((label) => label.id === activeLabelId) ?? null
+    : null;
+
+  const activeFolderLabel = activeLabel
+    ? activeLabel.name
+    : activeFolder === "all-inboxes"
+      ? "All Inboxes"
+      : activeFolder === "all-sent"
+        ? "Sent"
+        : activeMailFolder?.displayName || "Inbox";
+
+  const folderUnreadCount = activeLabel
+    ? folderEmails.filter((email) =>
+        email.labels.some((label) => label.id === activeLabel.id) && !email.isRead,
+      ).length
+    : folderEmails.filter((email) => !email.isRead).length;
+
+  const statusSummary = `${accounts.length} account${accounts.length === 1 ? "" : "s"} synced`;
+
+  const handleSettingsChange = useCallback(
+    (updates: Partial<EmailSettings>) => {
+      setSettings((prev) => ({
+        ...prev,
+        ...updates,
+      }));
+    },
+    [],
+  );
+
+  const handleDeleteAccount = useCallback(
+    async (accountId: string) => {
+      const accountToDelete = accounts.find(
+        (account) => account.id === accountId,
+      );
+      if (!accountToDelete) return;
+
+      try {
+        if (accountToDelete.provider === "microsoft") {
+          if (!window.electronAPI?.deleteMicrosoftAccount) {
+            throw new Error(
+              "Delete account is only available in the Electron desktop app.",
+            );
+          }
+
+          await window.electronAPI.deleteMicrosoftAccount(accountId);
+        }
+
+        const nextAccounts = accounts.filter(
+          (account) => account.id !== accountId,
+        );
+
+        setAccounts(nextAccounts);
+        setEmails([]);
+        setSelectedEmailId(null);
+        setMailSyncError(null);
+
+        setCurrentAccountId(nextAccounts[0]?.id ?? DEFAULT_PRIMARY_ACCOUNT.id);
+      } catch (error) {
+        console.error("Failed to delete account:", error);
+        setMailSyncError(
+          error instanceof Error ? error.message : "Failed to delete account.",
+        );
+      }
+    },
+    [accounts],
+  );
+
+  const handleAccountChange = useCallback(
+    (updates: Partial<Account>) => {
+      const previousAccount = currentAccount;
+      const nextAccount = {
+        ...previousAccount,
+        ...updates,
+      };
+
+      nextAccount.initials = getInitials(nextAccount.name);
+
+      setAccounts((prev) =>
+        prev.map((account) =>
+          account.id === previousAccount.id ? nextAccount : account,
+        ),
+      );
+
+      setEmails((prev) =>
+        prev.map((email) => {
+          const senderMatches = email.sender.email === previousAccount.email;
+          const recipientMatches =
+            email.to.includes(previousAccount.email) ||
+            email.cc?.includes(previousAccount.email);
+
+          if (!senderMatches && !recipientMatches) {
+            return email;
+          }
+
+          return {
+            ...email,
+            sender: senderMatches
+              ? {
+                  ...email.sender,
+                  name: nextAccount.name,
+                  email: nextAccount.email,
+                  initials: nextAccount.initials,
+                  color: nextAccount.color,
+                }
+              : email.sender,
+            to: replaceEmailAddress(
+              email.to,
+              previousAccount.email,
+              nextAccount.email,
+            ),
+            cc: email.cc
+              ? replaceEmailAddress(
+                  email.cc,
+                  previousAccount.email,
+                  nextAccount.email,
+                )
+              : email.cc,
+          };
+        }),
+      );
+    },
+    [currentAccount],
+  );
+
+  const handleConnectMicrosoft = useCallback(async () => {
+    setConnectMicrosoftError(null);
+
+    if (!window.electronAPI?.connectMicrosoftAccount) {
+      setConnectMicrosoftError(
+        "Microsoft OAuth is available only in the Electron desktop app.",
+      );
+      return;
+    }
+
+    setIsConnectingMicrosoft(true);
+    try {
+      const result = await window.electronAPI.connectMicrosoftAccount();
+      const connected = result.account;
+      const existing = accounts.find(
+        (account) =>
+          account.id === connected.id ||
+          account.email.toLowerCase() === connected.email.toLowerCase(),
+      );
+      const accountId = existing?.id ?? connected.id;
+
+      const nextAccount: Account = {
+        id: accountId,
+        name: connected.name,
+        email: connected.email,
+        initials: getInitials(connected.name),
+        color: existing?.color ?? selectProfileColor(connected.email),
+        provider: "microsoft",
+        externalId: connected.externalId,
+      };
+
+      setAccounts((prev) => {
+        const prevExisting = prev.find((account) => account.id === accountId);
+        if (prevExisting) {
+          return prev.map((account) =>
+            account.id === accountId ? nextAccount : account,
+          );
+        }
+        return [...prev, nextAccount];
+      });
+      setCurrentAccountId(accountId);
+    } catch (error) {
+      const fallback =
+        "Microsoft sign-in failed. Check OAuth env vars and redirect URI.";
+      setConnectMicrosoftError(
+        error instanceof Error ? error.message : fallback,
+      );
+    } finally {
+      setIsConnectingMicrosoft(false);
+    }
+  }, [accounts]);
+
+  const handleSelectEmail = useCallback(
+    async (email: EmailThread) => {
+      setSelectedEmailId(email.id);
+
+      const realMessageId = email.messageId;
+      const owningAccountId = email.accountId || currentAccountId;
+
+      console.log("[select email]", {
+        emailId: email.id,
+        messageId: realMessageId,
+        emailAccountId: email.accountId,
+        currentAccountId,
+        owningAccountId,
+      });
+
+      setEmails((prev) =>
+        prev.map((item) =>
+          item.id === email.id ? { ...item, isRead: true } : item,
+        ),
+      );
+
+      if (!email.isRead && window.electronAPI?.markMicrosoftEmailAsRead) {
+        window.electronAPI
+          .markMicrosoftEmailAsRead(owningAccountId, realMessageId)
+          .catch((error) => {
+            console.error("Failed to mark email as read on server:", error);
+          });
+      }
+
+      const shouldFetchBodyOrAttachments =
+        !email.body ||
+        (email.hasAttachment &&
+          (!email.attachments || email.attachments.length === 0));
+
+      if (shouldFetchBodyOrAttachments) {
+        try {
+          const bodyData = (await window.electronAPI?.getMicrosoftEmailBody(
+            owningAccountId,
+            realMessageId,
+          )) as any;
+
+          const rawContent = bodyData?.body?.content || "";
+          const isHtml = bodyData?.body?.contentType?.toLowerCase() === "html";
+
+          // CRITICAL SECURITY FIX: Sanitize all incoming email bodies
+          const sanitizedContent = DOMPurify.sanitize(
+            isHtml
+              ? rawContent
+              : `<p>${escapeHtml(rawContent).replace(/\n/g, "<br/>")}</p>`,
+            {
+              USE_PROFILES: { html: true },
+              FORBID_TAGS: [
+                "script",
+                "iframe",
+                "object",
+                "embed",
+                "form",
+                "base",
+                "meta",
+                "link",
+              ],
+              FORBID_ATTR: [
+                "onerror",
+                "onload",
+                "onclick",
+                "onmouseover",
+                "srcdoc",
+              ],
+            },
+          );
+
+          setEmails((prev) =>
+            prev.map((item) =>
+              item.id === email.id
+                ? {
+                    ...item,
+                    body: sanitizedContent,
+                    attachments: Array.isArray(bodyData?.attachments)
+                      ? bodyData.attachments.map((attachment: any) => ({
+                          id: String(attachment.id || ""),
+                          filename: String(attachment.name || "Unknown File"),
+                          size: Number(attachment.size || 0),
+                          contentType: String(
+                            attachment.contentType ||
+                              "application/octet-stream",
+                          ),
+                          isInline: Boolean(attachment.isInline),
+                          contentId:
+                            typeof attachment.contentId === "string"
+                              ? attachment.contentId
+                              : undefined,
+                        }))
+                      : item.attachments,
+                  }
+                : item,
+            ),
+          );
+        } catch (error) {
+          console.error("Failed to fetch email body:", error);
+        }
+      }
+    },
+    [currentAccountId],
+  );
+
+  const handleToggleStar = useCallback(
+    (id: string) => {
+      const emailToUpdate = emails.find((e) => e.id === id);
+      if (!emailToUpdate) return;
+
+      const newStarredState = !emailToUpdate.isStarred;
+
+      setEmails((prev) =>
+        prev.map((email) =>
+          email.id === id ? { ...email, isStarred: newStarredState } : email,
+        ),
+      );
+
+      if (window.electronAPI?.toggleMicrosoftEmailStar) {
+        window.electronAPI
+          .toggleMicrosoftEmailStar(
+            emailToUpdate.accountId || currentAccountId,
+            emailToUpdate.messageId,
+            newStarredState,
+          )
+          .catch((error) => {
+            console.error("Failed to toggle star on server:", error);
+          });
+      }
+    },
+    [emails, currentAccountId],
+  );
+
+  const handleDownloadAttachment = useCallback(
+    async (messageId: string, attachmentId: string, filename: string) => {
+      if (!window.electronAPI?.downloadMicrosoftEmailAttachment) {
+        alert("Download API is not available. Fully restart Electron.");
+        return;
+      }
+
+      const email = emails.find((e) => e.messageId === messageId);
+      const owningAccountId = email?.accountId || currentAccountId;
+
+      try {
+        const result =
+          await window.electronAPI.downloadMicrosoftEmailAttachment(
+            owningAccountId,
+            messageId,
+            attachmentId,
+            filename,
+          );
+
+        if (result.success) {
+          console.log("File securely saved to:", result.filePath);
+        }
+      } catch (error) {
+        console.error("Failed to download attachment:", error);
+        alert(
+          error instanceof Error ? error.message : "Failed to download file.",
+        );
+      }
+    },
+    [currentAccountId, emails],
+  );
+
+  const handleMarkUnread = useCallback(
+    (id: string) => {
+      const emailToUpdate = emails.find((e) => e.id === id);
+      if (!emailToUpdate) return;
+
+      setEmails((prev) =>
+        prev.map((email) =>
+          email.id === id ? { ...email, isRead: false } : email,
+        ),
+      );
+
+      if (selectedEmailId === id) setSelectedEmailId(null);
+
+      if (window.electronAPI?.markMicrosoftEmailAsUnread) {
+        window.electronAPI
+          .markMicrosoftEmailAsUnread(
+            emailToUpdate.accountId || currentAccountId,
+            emailToUpdate.messageId,
+          )
+          .catch((error) => {
+            console.error("Failed to mark unread on server:", error);
+          });
+      }
+    },
+    [selectedEmailId, emails, currentAccountId],
+  );
+
+  const handleSnooze = useCallback(
+    (id: string) => {
+      setEmails((prev) => prev.filter((email) => email.id !== id));
+      if (selectedEmailId === id) setSelectedEmailId(null);
+      alert("Email snoozed locally. (Backend snooze sync coming soon!)");
+    },
+    [selectedEmailId],
+  );
+
+  const handleArchive = useCallback(
+    async (id: string) => {
+      const emailToArchive = emails.find((email) => email.id === id);
+      if (!emailToArchive) return;
+
+      setEmails((prev) =>
+        prev.map((email) =>
+          email.id === id
+            ? {
+                ...email,
+                folder: findFolderIdByKnownName(mailFolders, "archive"),
+              }
+            : email,
+        ),
+      );
+
+      if (selectedEmailId === id) setSelectedEmailId(null);
+
+      const realMessageId = emailToArchive.messageId;
+
+      if (window.electronAPI?.moveMicrosoftEmail && realMessageId) {
+        try {
+          await window.electronAPI.moveMicrosoftEmail(
+            emailToArchive.accountId || currentAccountId,
+            realMessageId,
+            "archive",
+          );
+        } catch (error) {
+          console.error("Failed to archive email on server", error);
+        }
+      }
+    },
+    [emails, selectedEmailId, currentAccountId, mailFolders],
+  );
+
+  const handleDelete = useCallback(
+    async (id: string) => {
+      const emailToDelete = emails.find((email) => email.id === id);
+      if (!emailToDelete) return;
+
+      const owningAccountId = emailToDelete.accountId || currentAccountId;
+
+      const destinationFolderId = findFolderIdByKnownNameForAccount(
+        mailFolders,
+        owningAccountId,
+        "deleteditems",
+      );
+
+      setEmails((prev) =>
+        prev.map((email) =>
+          email.id === id
+            ? {
+                ...email,
+                folder: destinationFolderId,
+                folderId: destinationFolderId,
+              }
+            : email,
+        ),
+      );
+
+      if (selectedEmailId === id) setSelectedEmailId(null);
+
+      const realMessageId = emailToDelete.messageId;
+
+      if (window.electronAPI?.moveMicrosoftEmail && realMessageId) {
+        try {
+          await window.electronAPI.moveMicrosoftEmail(
+            owningAccountId,
+            realMessageId,
+            "deleteditems",
+          );
+        } catch (error) {
+          console.error("Failed to delete email on server", error);
+        }
+      }
+    },
+    [emails, selectedEmailId, currentAccountId, mailFolders],
+  );
+
+  const handleCompose = useCallback(
+    (prefill?: Partial<Draft>) => {
+      const signatureHtml = settings.signature.trim()
+        ? `<div>${plainTextToHtml(settings.signature.trim())}</div>`
+        : "";
+
+      const newDraft: Draft = {
+        id: `draft-${Date.now()}`,
+        to: prefill?.to || "",
+        cc: prefill?.cc || "",
+        subject: prefill?.subject || "",
+        body: prefill?.body ?? signatureHtml,
+        isMinimized: false,
+        isFullscreen: false,
+      };
+
+      setDrafts((prev) => [...prev, newDraft]);
+    },
+    [settings.signature],
+  );
+
+  const handleEmailDropToFolder = useCallback(
+    async ({
+      emailId,
+      messageId,
+      sourceFolderId,
+      destinationFolderId,
+    }: {
+      emailId: string;
+      messageId: string;
+      sourceFolderId: string;
+      destinationFolderId: string;
+    }) => {
+      if (sourceFolderId === destinationFolderId) {
+        return false;
+      }
+
+      if (!window.electronAPI?.moveMicrosoftEmailToFolder) {
+        window.alert(
+          "Move email API is not available. Fully restart Electron.",
+        );
+        return false;
+      }
+
+      const emailToMove = emails.find((email) => email.id === emailId);
+      if (!emailToMove) {
+        return false;
+      }
+
+      const previousEmails = emails;
+
+      setEmails((prev) =>
+        prev.map((email) =>
+          email.id === emailId
+            ? {
+                ...email,
+                folder: destinationFolderId,
+                folderId: destinationFolderId,
+              }
+            : email,
+        ),
+      );
+
+      if (selectedEmailId === emailId && activeFolder === sourceFolderId) {
+        setSelectedEmailId(null);
+      }
+
+      try {
+        const result = await window.electronAPI.moveMicrosoftEmailToFolder({
+          accountId: emailToMove.accountId || currentAccount.id,
+          messageId,
+          destinationFolderId,
+        });
+
+        setEmails((prev) =>
+          prev.map((email) =>
+            email.id === emailId
+              ? {
+                  ...email,
+                  id: `${destinationFolderId}:${result.messageId}`,
+                  messageId: result.messageId,
+                  folder: destinationFolderId,
+                  folderId: destinationFolderId,
+                }
+              : email,
+          ),
+        );
+
+        return true;
+      } catch (error) {
+        console.error("Failed to move email to folder:", error);
+        setEmails(previousEmails);
+        window.alert(
+          error instanceof Error ? error.message : "Failed to move email.",
+        );
+        return false;
+      }
+    },
+    [activeFolder, currentAccount.id, emails, selectedEmailId],
+  );
+
+  const expandSelectedIds = useCallback(
+    (emailIds: string[]) =>
+      Array.from(
+        new Set(
+          emailIds.flatMap(
+            (emailId) => threadRowMessageIds.get(emailId) || [emailId],
+          ),
+        ),
+      ),
+    [threadRowMessageIds],
+  );
+
+  const handleBulkMoveToFolder = useCallback(
+    async (emailIds: string[], destinationFolderId: string) => {
+      const expandedIds = expandSelectedIds(emailIds);
+      const emailsToMove = emails.filter((email) =>
+        expandedIds.includes(email.id),
+      );
+
+      for (const email of emailsToMove) {
+        await handleEmailDropToFolder({
+          emailId: email.id,
+          messageId: email.messageId,
+          sourceFolderId: email.folder,
+          destinationFolderId,
+        });
+      }
+
+      setSelectedEmailIds([]);
+    },
+    [emails, expandSelectedIds, handleEmailDropToFolder],
+  );
+
+  function findFolderIdByKnownNameForAccount(
+    folders: MailFolder[],
+    accountId: string,
+    knownName: string,
+  ) {
+    return (
+      folders.find(
+        (folder) =>
+          folder.accountId === accountId && folder.wellKnownName === knownName,
+      )?.id || knownName
+    );
+  }
+
+  const openReplyDraft = useCallback(
+    (
+      mode: "reply" | "replyAll",
+      tone?: AiTone,
+      sourceEmail?: EmailThread | null,
+    ) => {
+      const targetEmail = sourceEmail || selectedEmail;
+      if (!targetEmail) return;
+
+      const subject = targetEmail.subject.toLowerCase().startsWith("re:")
+        ? targetEmail.subject
+        : `Re: ${targetEmail.subject}`;
+
+      const to =
+        mode === "reply"
+          ? targetEmail.sender.email
+          : Array.from(
+              new Set(
+                [targetEmail.sender.email, ...targetEmail.to].filter(
+                  (email) =>
+                    email.toLowerCase() !== currentAccount.email.toLowerCase(),
+                ),
+              ),
+            ).join(", ");
+
+      const cc =
+        mode === "replyAll"
+          ? targetEmail.cc
+              ?.filter(
+                (email) =>
+                  email.toLowerCase() !== currentAccount.email.toLowerCase(),
+              )
+              .join(", ") || ""
+          : "";
+
+      handleCompose({
+        to,
+        cc,
+        subject,
+        body: buildReplyHtml(targetEmail, settings.signature),
+        aiTone: tone,
+        aiHint: tone ? toneHintFor(tone) : undefined,
+      });
+    },
+    [currentAccount.email, handleCompose, selectedEmail, settings.signature],
+  );
+
+  const handleReply = useCallback((message?: EmailThread) => {
+    openReplyDraft("reply", undefined, message);
+  }, [openReplyDraft]);
+
+  const handleReplyAll = useCallback((message?: EmailThread) => {
+    openReplyDraft("replyAll", undefined, message);
+  }, [openReplyDraft]);
+
+  const handleReplyWithTone = useCallback((tone: AiTone) => {
+    openReplyDraft("reply", tone);
+  }, [openReplyDraft]);
+
+  const handleForward = useCallback((message?: EmailThread) => {
+    const targetEmail = message || selectedEmail;
+    if (!targetEmail) return;
+    handleCompose({
+      subject: `Fwd: ${targetEmail.subject}`,
+    });
+  }, [selectedEmail, handleCompose]);
+
+  const closeGlobalSearch = useCallback(() => {
+    setIsGlobalSearchOpen(false);
+    setIsGlobalSearchActionMenuOpen(false);
+  }, []);
+
+  const openGlobalSearchResult = useCallback(
+    (message: EmailThread) => {
+      setSearchQuery(globalSearchDraft);
+      handleSelectEmail(message);
+      closeGlobalSearch();
+    },
+    [closeGlobalSearch, globalSearchDraft, handleSelectEmail],
+  );
+
+  const runGlobalSearchAction = useCallback(
+    (message: EmailThread, actionIndex: number) => {
+      setSearchQuery(globalSearchDraft);
+      handleSelectEmail(message);
+      closeGlobalSearch();
+
+      if (actionIndex === 0) {
+        handleReply(message);
+        return;
+      }
+
+      handleForward(message);
+    },
+    [
+      closeGlobalSearch,
+      globalSearchDraft,
+      handleForward,
+      handleReply,
+      handleSelectEmail,
+    ],
+  );
+
+  const handleToggleEmailSelection = useCallback((emailId: string) => {
+    setSelectedEmailIds((prev) =>
+      prev.includes(emailId)
+        ? prev.filter((id) => id !== emailId)
+        : [...prev, emailId],
+    );
+  }, []);
+
+  const handleClearEmailSelection = useCallback(() => {
+    setSelectedEmailIds([]);
+  }, []);
+
+  const handleDraftUpdate = useCallback(
+    (id: string, updates: Partial<Draft>) => {
+      setDrafts((prev) =>
+        prev.map((draft) =>
+          draft.id === id ? { ...draft, ...updates } : draft,
+        ),
+      );
+    },
+    [],
+  );
+
+  const handleDraftClose = useCallback((id: string) => {
+    setDrafts((prev) => prev.filter((draft) => draft.id !== id));
+  }, []);
+
+  const handleDraftSend = useCallback(
+    async (id: string) => {
+      const draft = drafts.find((d) => d.id === id);
+      if (!draft) return;
+
+      if (window.electronAPI?.sendMicrosoftEmail) {
+        try {
+          setDrafts((prev) => prev.filter((d) => d.id !== id));
+
+          try {
+            await window.electronAPI.sendMicrosoftEmail({
+              accountId: currentAccountId,
+              to: draft.to,
+              cc: draft.cc,
+              subject: draft.subject,
+              body: draft.body,
+            });
+          } catch (error) {
+            console.error("Failed to send email:", error);
+            setDrafts((prev) => [...prev, draft]);
+            alert("Failed to send email. The draft was restored.");
+          }
+
+          window.electronAPI
+            .syncMicrosoftInbox?.(currentAccountId)
+            .catch(console.error);
+        } catch (error) {
+          console.error("Failed to send email:", error);
+          alert("Failed to send email. Check console for details.");
+        }
+      }
+    },
+    [drafts, currentAccountId],
+  );
+
+  const handleDraftMinimize = useCallback((id: string) => {
+    setDrafts((prev) =>
+      prev.map((draft) =>
+        draft.id === id ? { ...draft, isMinimized: true } : draft,
+      ),
+    );
+  }, []);
+
+  const handleDraftRestore = useCallback((id: string) => {
+    setDrafts((prev) =>
+      prev.map((draft) =>
+        draft.id === id ? { ...draft, isMinimized: false } : draft,
+      ),
+    );
+  }, []);
+
+  const handleDraftFullscreen = useCallback((id: string) => {
+    setDrafts((prev) =>
+      prev.map((draft) =>
+        draft.id === id
+          ? { ...draft, isFullscreen: !draft.isFullscreen }
+          : draft,
+      ),
+    );
+  }, []);
+
+  const handleCreateLabel = useCallback(
+    async (name: string) => {
+      const trimmedName = name.trim();
+
+      if (!trimmedName) {
+        return false;
+      }
+
+      if (!window.electronAPI?.createLabel) {
+        window.alert(
+          "Create label API is not available. Fully restart Electron.",
+        );
+        return false;
+      }
+
+      if (
+        currentAccount.provider !== "microsoft" ||
+        !currentAccount.id.startsWith("ms-")
+      ) {
+        window.alert("Connect a Microsoft account before creating labels.");
+        return false;
+      }
+
+      try {
+        const created = await window.electronAPI.createLabel({
+          accountId: currentAccount.id,
+          name: trimmedName,
+          color: "#C9A84C",
+        });
+
+        setEmailLabels((prev) => {
+          if (prev.some((label) => label.id === created.id)) {
+            return prev;
+          }
+
+          return [...prev, created].sort((a, b) =>
+            a.name.localeCompare(b.name),
+          );
+        });
+
+        setActiveLabelId(created.id);
+        setSelectedEmailId(null);
+
+        return true;
+      } catch (error) {
+        console.error("Failed to create label:", error);
+        window.alert(
+          error instanceof Error ? error.message : "Failed to create label.",
+        );
+        return false;
+      }
+    },
+    [currentAccount],
+  );
+
+  const handleCreateFolder = useCallback(
+    async (name: string) => {
+      const trimmedName = name.trim();
+
+      if (!trimmedName) {
+        return false;
+      }
+
+      if (!window.electronAPI?.createMicrosoftFolder) {
+        window.alert(
+          "Create folder API is not available. Fully restart Electron.",
+        );
+        return false;
+      }
+
+      if (
+        currentAccount.provider !== "microsoft" ||
+        !currentAccount.id.startsWith("ms-")
+      ) {
+        window.alert("Connect a Microsoft account before creating folders.");
+        return false;
+      }
+
+      try {
+        const createdFolder = await window.electronAPI.createMicrosoftFolder({
+          accountId: currentAccount.id,
+          displayName: trimmedName,
+        });
+
+        setMailFolders((prev) => {
+          const withoutDuplicate = prev.filter(
+            (folder) => folder.id !== createdFolder.id,
+          );
+
+          return [...withoutDuplicate, createdFolder].sort((a, b) =>
+            (a.path || a.displayName).localeCompare(b.path || b.displayName),
+          );
+        });
+
+        setActiveFolder(createdFolder.id);
+        setActiveLabelId(null);
+        setSelectedEmailId(null);
+
+        return true;
+      } catch (error) {
+        console.error("Failed to create folder:", error);
+        window.alert(
+          error instanceof Error ? error.message : "Failed to create folder.",
+        );
+        return false;
+      }
+    },
+    [currentAccount],
+  );
+
+  const handleRenameFolder = useCallback(
+    async (folder: MailFolder, displayName: string) => {
+      const trimmedName = displayName.trim();
+      if (!trimmedName) return false;
+
+      if (!window.electronAPI?.renameMicrosoftFolder) {
+        window.alert(
+          "Rename folder API is not available. Fully restart Electron.",
+        );
+        return false;
+      }
+
+      try {
+        const updatedFolder = await window.electronAPI.renameMicrosoftFolder({
+          accountId: folder.accountId,
+          folderId: folder.id,
+          displayName: trimmedName,
+        });
+
+        setMailFolders((prev) =>
+          prev.map((item) =>
+            item.id === folder.id ? { ...item, ...updatedFolder } : item,
+          ),
+        );
+
+        return true;
+      } catch (error) {
+        console.error("Failed to rename folder:", error);
+        window.alert(
+          error instanceof Error ? error.message : "Failed to rename folder.",
+        );
+        return false;
+      }
+    },
+    [],
+  );
+
+  const handleDeleteFolder = useCallback(
+    async (folder: MailFolder) => {
+      if (!window.electronAPI?.deleteMicrosoftFolder) {
+        window.alert(
+          "Delete folder API is not available. Fully restart Electron.",
+        );
+        return false;
+      }
+
+      try {
+        const result = await window.electronAPI.deleteMicrosoftFolder({
+          accountId: folder.accountId,
+          folderId: folder.id,
+        });
+
+        const deletedFolderIds = new Set(
+          result.deletedFolderIds || [folder.id],
+        );
+
+        setMailFolders((prev) =>
+          prev.filter((item) => !deletedFolderIds.has(item.id)),
+        );
+        setEmails((prev) =>
+          prev.filter((email) => !deletedFolderIds.has(email.folder)),
+        );
+        setSelectedEmailIds((prev) =>
+          prev.filter((id) => {
+            const email = emails.find((item) => item.id === id);
+            return email ? !deletedFolderIds.has(email.folder) : false;
+          }),
+        );
+
+        if (deletedFolderIds.has(activeFolder)) {
+          setActiveFolder(findDefaultInboxFolderId(mailFolders));
+          setSelectedEmailId(null);
+        }
+
+        return true;
+      } catch (error) {
+        console.error("Failed to delete folder:", error);
+        window.alert(
+          error instanceof Error ? error.message : "Failed to delete folder.",
+        );
+        return false;
+      }
+    },
+    [activeFolder, emails, mailFolders],
+  );
+
+  const handleEmptyFolder = useCallback(
+    async (folder: MailFolder) => {
+      if (!window.electronAPI?.emptyMicrosoftFolder) {
+        window.alert(
+          "Empty folder API is not available. Fully restart Electron.",
+        );
+        return false;
+      }
+
+      try {
+        await window.electronAPI.emptyMicrosoftFolder({
+          accountId: folder.accountId,
+          folderId: folder.id,
+        });
+
+        setEmails((prev) => prev.filter((email) => email.folder !== folder.id));
+        setSelectedEmailIds([]);
+        if (activeFolder === folder.id) {
+          setSelectedEmailId(null);
+        }
+
+        return true;
+      } catch (error) {
+        console.error("Failed to empty folder:", error);
+        window.alert(
+          error instanceof Error ? error.message : "Failed to empty folder.",
+        );
+        return false;
+      }
+    },
+    [activeFolder],
+  );
+
+  const handleSetFolderIcon = useCallback(
+    async (folder: MailFolder, icon: string) => {
+      if (!window.electronAPI?.setMicrosoftFolderIcon) {
+        window.alert(
+          "Folder icon API is not available. Fully restart Electron.",
+        );
+        return false;
+      }
+
+      try {
+        const updatedFolder = await window.electronAPI.setMicrosoftFolderIcon({
+          accountId: currentAccount.id,
+          folderId: folder.id,
+          icon,
+        });
+
+        setMailFolders((prev) =>
+          prev.map((item) =>
+            item.id === folder.id ? { ...item, ...updatedFolder } : item,
+          ),
+        );
+
+        return true;
+      } catch (error) {
+        console.error("Failed to set folder icon:", error);
+        window.alert(
+          error instanceof Error ? error.message : "Failed to set folder icon.",
+        );
+        return false;
+      }
+    },
+    [currentAccount.id],
+  );
+
+  const handleRenameLabel = useCallback(async (label: EmailLabel) => {
+    if (!window.electronAPI?.renameLabel) return;
+    try {
+      const updated = await window.electronAPI.renameLabel({
+        accountId: label.accountId,
+        labelId: label.id,
+        name: label.name,
+      });
+
+      if (!updated) return;
+
+      setEmailLabels((prev) =>
+        prev.map((item) => (item.id === label.id ? updated : item)),
+      );
+      setEmails((prev) =>
+        prev.map((email) => ({
+          ...email,
+          labels: email.labels.map((item) =>
+            item.id === label.id ? updated : item,
+          ),
+        })),
+      );
+    } catch (error) {
+      console.error("Failed to rename label:", error);
+    }
+  }, []);
+
+  const handleBulkDelete = useCallback(
+    async (emailIds: string[]) => {
+      const uniqueIds = expandSelectedIds(emailIds);
+      if (uniqueIds.length === 0) return;
+
+      for (const emailId of uniqueIds) {
+        await handleDelete(emailId);
+      }
+
+      setSelectedEmailIds([]);
+    },
+    [expandSelectedIds, handleDelete],
+  );
+
+  const handleDeleteLabel = useCallback(
+    async (label: EmailLabel) => {
+      try {
+        await window.electronAPI?.deleteLabel?.(label.accountId, label.id);
+
+        setEmailLabels((prev) => prev.filter((item) => item.id !== label.id));
+        setEmails((prev) =>
+          prev.map((email) => ({
+            ...email,
+            labels: email.labels.filter((item) => item.id !== label.id),
+          })),
+        );
+
+        if (activeLabelId === label.id) setActiveLabelId(null);
+      } catch (error) {
+        console.error("Failed to delete label:", error);
+        window.alert(
+          error instanceof Error ? error.message : "Failed to delete label.",
+        );
+      }
+    },
+    [activeLabelId],
+  );
+
+  const handleToggleEmailLabel = useCallback(
+    async (email: EmailThread, label: EmailLabel) => {
+      const hasLabel = email.labels.some((item) => item.id === label.id);
+
+      setEmails((prev) =>
+        prev.map((item) =>
+          item.id === email.id
+            ? {
+                ...item,
+                labels: hasLabel
+                  ? item.labels.filter(
+                      (existingLabel) => existingLabel.id !== label.id,
+                    )
+                  : [...item.labels, label],
+              }
+            : item,
+        ),
+      );
+
+      try {
+        if (hasLabel) {
+          await window.electronAPI?.removeLabelFromEmail?.({
+            accountId: currentAccountId,
+            messageId: email.messageId,
+            labelId: label.id,
+          });
+        } else {
+          await window.electronAPI?.assignLabelToEmail?.({
+            accountId: currentAccountId,
+            messageId: email.messageId,
+            labelId: label.id,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to update email label:", error);
+        await fetchLocalAndSetUI();
+        window.alert(
+          error instanceof Error
+            ? error.message
+            : "Failed to update email label.",
+        );
+      }
+    },
+    [currentAccountId, fetchLocalAndSetUI],
+  );
+
+  const handleBulkApplyLabel = useCallback(
+    async (emailIds: string[], labelId: string) => {
+      const label = emailLabels.find((item) => item.id === labelId);
+      if (!label) return;
+
+      const emailsToLabel = emails.filter((email) =>
+        expandSelectedIds(emailIds).includes(email.id),
+      );
+
+      for (const email of emailsToLabel) {
+        const alreadyHasLabel = email.labels.some(
+          (item) => item.id === label.id,
+        );
+
+        if (alreadyHasLabel) {
+          continue;
+        }
+
+        await handleToggleEmailLabel(email, label);
+      }
+
+      setSelectedEmailIds([]);
+    },
+    [emailLabels, emails, expandSelectedIds, handleToggleEmailLabel],
+  );
+
+  const handleArchiveThread = useCallback(
+    async (messageIds: string[]) => {
+      for (const messageId of messageIds) {
+        await handleArchive(messageId);
+      }
+    },
+    [handleArchive],
+  );
+
+  const handleDeleteThread = useCallback(
+    async (messageIds: string[]) => {
+      for (const messageId of messageIds) {
+        await handleDelete(messageId);
+      }
+    },
+    [handleDelete],
+  );
+
+  const handleSnoozeThread = useCallback(
+    (messageIds: string[]) => {
+      for (const messageId of messageIds) {
+        handleSnooze(messageId);
+      }
+    },
+    [handleSnooze],
+  );
+
+  useEffect(() => {
+    if (!isCalendarOpen) return;
+
+    if (window.electronAPI?.getMicrosoftCalendarEvents) {
+      setHasLoadedCalendar(false);
+      window.electronAPI
+        .getMicrosoftCalendarEvents(currentAccountId)
+        .then((events) => setCalendarEvents(events))
+        .catch(console.error)
+        .finally(() => setHasLoadedCalendar(true));
+      return;
+    }
+
+    setHasLoadedCalendar(true);
+  }, [isCalendarOpen, currentAccountId]);
+
+  const handleManualRefresh = useCallback(async () => {
+    try {
+      const api = window.electronAPI as any;
+      if (api?.syncMicrosoftEmails) {
+        await api.syncMicrosoftEmails(currentAccount.id);
+      } else if (api?.syncMicrosoftInbox) {
+        await api.syncMicrosoftInbox(currentAccount.id);
+      }
+      await fetchLocalAndSetUI();
+    } catch (e) {
+      console.error("Manual refresh failed", e);
+    }
+  }, [currentAccount.id, fetchLocalAndSetUI]);
+
+  useEffect(() => {
+    if (!isGlobalSearchOpen) return;
+    const timer = window.setTimeout(() => globalSearchRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [isGlobalSearchOpen]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isSessionLocked) return;
+
+      if (isGlobalSearchOpen) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setIsGlobalSearchOpen(false);
+        }
+        return;
+      }
+
+      if (event.shiftKey && event.code === "Space") {
+        event.preventDefault();
+        setGlobalSearchDraft(searchQuery);
+        setGlobalSearchSelectedIndex(0);
+        setIsGlobalSearchActionMenuOpen(false);
+        setGlobalSearchActionIndex(0);
+        setIsGlobalSearchOpen(true);
+        return;
+      }
+
+      const target = event.target as HTMLElement;
+      const isInInput =
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable;
+      if (isInInput) return;
+
+      switch (event.key) {
+        case "t":
+        case "T":
+          event.preventDefault();
+          setIsCalendarOpen((prev) => !prev);
+          break;
+        case "c":
+        case "C":
+          event.preventDefault();
+          handleCompose();
+          break;
+        case "r":
+        case "R":
+          event.preventDefault();
+          handleReply();
+          break;
+        case "e":
+        case "E":
+          if (selectedEmailId) {
+            event.preventDefault();
+            handleArchive(selectedEmailId);
+          }
+          break;
+        case "ArrowDown": {
+          event.preventDefault();
+          const idx = folderEmails.findIndex(
+            (email) => email.id === selectedEmailId,
+          );
+          const next = folderEmails[idx + 1] ?? folderEmails[0];
+          if (next) handleSelectEmail(next);
+          break;
+        }
+        case "ArrowUp": {
+          event.preventDefault();
+          const idx = folderEmails.findIndex(
+            (email) => email.id === selectedEmailId,
+          );
+          const prev =
+            folderEmails[idx - 1] ?? folderEmails[folderEmails.length - 1];
+          if (prev) handleSelectEmail(prev);
+          break;
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    isSessionLocked,
+    isGlobalSearchOpen,
+    searchQuery,
+    selectedEmailId,
+    folderEmails,
+    handleArchive,
+    handleCompose,
+    handleReply,
+    handleSelectEmail,
+  ]);
+
+  const appStyle = {
+    backgroundColor: "var(--bg-0)",
+    color: "var(--fg-0)",
+    fontFamily: "var(--font-sans)",
+  } as React.CSSProperties;
+
+  return (
+    <div
+      data-theme={themeAttribute}
+      className="relative grid h-full min-h-0 w-full select-none overflow-hidden bg-[var(--bg-0)] text-[var(--fg-0)]"
+      style={{
+        ...appStyle,
+        gridTemplateRows: "var(--topbar-h) minmax(0,1fr) var(--statusbar-h)",
+      }}
+    >
+      <AnimatePresence>
+        {tutorialStep > 0 && (
+          <TutorialOverlay
+            step={tutorialStep}
+            setStep={setTutorialStep}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            isSettingsOpen={isSettingsOpen}
+          />
+        )}
+      </AnimatePresence>
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        currentAccount={currentAccount}
+        accounts={accounts}
+        settings={settings}
+        realStorageGB={dbStorageGB}
+        onAccountChange={handleAccountChange}
+        onSettingsChange={handleSettingsChange}
+        onConnectMicrosoft={handleConnectMicrosoft}
+        onDeleteAccount={handleDeleteAccount}
+        isConnectingMicrosoft={isConnectingMicrosoft}
+        connectMicrosoftError={connectMicrosoftError ?? mailSyncError}
+      />
+
+      <div
+        className="grid border-b border-[var(--border-subtle)] bg-[var(--bg-1)]"
+        style={{
+          gridTemplateColumns: "var(--sidebar-w) var(--list-w) minmax(0,1fr)",
+        }}
+      >
+        <div className="flex items-center px-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm font-semibold tracking-normal text-[var(--fg-0)]">
+              RYZE
+            </span>
+            <span className="font-mono-jetbrains text-[11px] text-[var(--fg-3)]">
+              v0.4.2
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center px-3">
+          <div className="flex min-w-0 items-center gap-2 font-mono-jetbrains text-[12px] text-[var(--fg-2)]">
+            <span className="truncate">
+              {currentAccount.email} / <span className="text-[var(--fg-0)]">{activeFolderLabel}</span>
+            </span>
+          </div>
+        </div>
+        <div className="flex min-w-0 items-center justify-end gap-2 px-3">
+          <button className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]">
+            <MessageSquare size={14} />
+          </button>
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
+          >
+            <Settings2 size={14} />
+          </button>
+        </div>
+      </div>
+
+      <div
+        className="grid min-h-0 overflow-hidden"
+        style={{
+          gridTemplateColumns: "var(--sidebar-w) var(--list-w) minmax(0,1fr)",
+        }}
+      >
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: isAppLoaded ? 1 : 0 }}
+          transition={{ duration: 0.25, ease: "easeOut" }}
+          className="h-full min-h-0"
+        >
+          <Sidebar
+            isCollapsed={isSidebarCollapsed}
+            onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            activeFolder={activeFolder}
+            onFolderSelect={(folder) => {
+              setActiveFolder(folder);
+              setActiveLabelId(null);
+              setSelectedEmailId(null);
+              setSelectedEmailIds([]);
+            }}
+            unreadCounts={unreadCounts}
+            onRenameFolder={handleRenameFolder}
+            onDeleteFolder={handleDeleteFolder}
+            onEmptyFolder={handleEmptyFolder}
+            onSetFolderIcon={handleSetFolderIcon}
+            onCompose={() => handleCompose()}
+            currentAccount={currentAccount}
+            accounts={accounts}
+            onAccountSwitch={(account) => {
+              const nextAccountInbox =
+                mailFolders.find(
+                  (folder) =>
+                    folder.accountId === account.id &&
+                    folder.wellKnownName === "inbox",
+                )?.id || "inbox";
+              const shouldFollowInbox =
+                activeFolder !== "all-inboxes" &&
+                (activeFolder === "inbox" || activeKnownFolder === "inbox");
+
+              setCurrentAccountId(account.id);
+              setActiveLabelId(null);
+              if (shouldFollowInbox) {
+                setActiveFolder(nextAccountInbox as FolderType);
+              }
+              setSelectedEmailId(null);
+              setSelectedEmailIds([]);
+            }}
+            onRefresh={handleManualRefresh}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            folders={mailFolders}
+            labels={emailLabels}
+            activeLabelId={activeLabelId}
+            onLabelSelect={(labelId) => {
+              setActiveLabelId(labelId);
+              setSelectedEmailId(null);
+              setSelectedEmailIds([]);
+            }}
+            onCreateLabel={handleCreateLabel}
+            onCreateFolder={handleCreateFolder}
+            onRenameLabel={handleRenameLabel}
+            onDeleteLabel={handleDeleteLabel}
+            onEmailDropToFolder={handleEmailDropToFolder}
+            labelCounts={labelCounts}
+          />
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: isAppLoaded ? 1 : 0 }}
+          transition={{ duration: 0.25, delay: 0.1, ease: "easeOut" }}
+          className="h-full min-h-0"
+        >
+          <MessageList
+            emails={folderEmails}
+            threadRows={threadRows}
+            folderLabel={activeFolderLabel}
+            folderUnreadCount={folderUnreadCount}
+            folderTotalCount={folderEmails.length}
+            syncLabel={formatRelativeSync(lastSyncedAt)}
+            selectedId={selectedEmailId}
+            onSelect={handleSelectEmail}
+            onArchive={(id) =>
+              handleArchiveThread(threadRowMessageIds.get(id) || [id])
+            }
+            onDelete={(id) =>
+              handleDeleteThread(threadRowMessageIds.get(id) || [id])
+            }
+            searchQuery={searchQuery}
+            onClearSearch={() => setSearchQuery("")}
+            density={settings.density}
+            showPreviewText={settings.showPreviewText}
+            showAvatars={settings.showAvatars}
+            selectedEmailIds={selectedEmailIds}
+            onToggleEmailSelection={handleToggleEmailSelection}
+            onClearEmailSelection={handleClearEmailSelection}
+            onBulkDelete={handleBulkDelete}
+            onBulkMoveToFolder={handleBulkMoveToFolder}
+            onBulkApplyLabel={handleBulkApplyLabel}
+            folders={mailFolders}
+            onSnooze={(id) =>
+              handleSnoozeThread(threadRowMessageIds.get(id) || [id])
+            }
+            labels={emailLabels}
+          />
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: isAppLoaded ? 1 : 0 }}
+          transition={{ duration: 0.25, delay: 0.2, ease: "easeOut" }}
+          className="flex h-full min-h-0 overflow-hidden"
+        >
+          <ReadingPane
+            email={selectedEmail}
+            threadMessages={selectedConversation?.messages || []}
+            relatedEmails={emails}
+            onReply={handleReply}
+            onReplyWithTone={handleReplyWithTone}
+            onForward={handleForward}
+            onArchive={handleArchive}
+            onDelete={handleDelete}
+            onReplyAll={handleReplyAll}
+            showAvatars={settings.showAvatars}
+            currentUserEmail={currentAccount.email}
+            blockRemoteImages={settings.blockRemoteImages}
+            confirmExternalLinks={settings.confirmExternalLinks}
+            labels={emailLabels}
+            onToggleStar={handleToggleStar}
+            onMarkUnread={handleMarkUnread}
+            onDownloadAttachment={handleDownloadAttachment}
+            onToggleLabel={handleToggleEmailLabel}
+            isDarkMode={isAppDarkMode}
+          />
+        </motion.div>
+      </div>
+      <CalendarSidebar
+        isOpen={isCalendarOpen}
+        onClose={() => setIsCalendarOpen(false)}
+        events={calendarEvents}
+        isLoading={isCalendarOpen && !hasLoadedCalendar}
+        lastSyncedAt={lastSyncedAt}
+        mailboxCount={emails.length}
+        draftCount={drafts.length}
+        privacyModeEnabled={settings.blockRemoteImages}
+      />
+      <ComposeDrawer
+        drafts={drafts}
+        onDraftUpdate={handleDraftUpdate}
+        onDraftClose={handleDraftClose}
+        onDraftSend={handleDraftSend}
+        onDraftMinimize={handleDraftMinimize}
+        onDraftRestore={handleDraftRestore}
+        onDraftFullscreen={handleDraftFullscreen}
+      />
+
+      <AnimatePresence>
+        {isGlobalSearchOpen && (
+          <>
+            <motion.button
+              type="button"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={closeGlobalSearch}
+              className="absolute inset-0 z-[70] bg-black/45 backdrop-blur-[2px]"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.98, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.98, y: 8 }}
+              transition={{ duration: 0.16 }}
+              className="absolute inset-0 z-[71] flex items-center justify-center p-6"
+            >
+              <div className="w-[min(760px,calc(100vw-48px))] rounded-[var(--radius-ryze-lg)] border border-[var(--border-1)] bg-[var(--bg-1)] p-3 shadow-[0_16px_48px_-12px_oklch(0_0_0_/_0.6)]">
+                <div className="flex items-center gap-2">
+                <input
+                  ref={globalSearchRef}
+                  type="text"
+                  value={globalSearchDraft}
+                  onChange={(event) => setGlobalSearchDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      setGlobalSearchSelectedIndex((prev) =>
+                        liveSearchRows.length === 0
+                          ? prev
+                          : Math.min(prev + 1, liveSearchRows.length - 1),
+                      );
+                    } else if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      setGlobalSearchSelectedIndex((prev) =>
+                        Math.max(prev - 1, 0),
+                      );
+                    } else if (event.key === "ArrowRight") {
+                      if (!selectedLiveSearchRow) return;
+                      event.preventDefault();
+                      if (!isGlobalSearchActionMenuOpen) {
+                        setIsGlobalSearchActionMenuOpen(true);
+                        setGlobalSearchActionIndex(0);
+                        return;
+                      }
+
+                      setGlobalSearchActionIndex((prev) =>
+                        Math.min(prev + 1, 1),
+                      );
+                    } else if (event.key === "ArrowLeft") {
+                      if (!isGlobalSearchActionMenuOpen) return;
+                      event.preventDefault();
+                      if (globalSearchActionIndex === 1) {
+                        setGlobalSearchActionIndex(0);
+                        return;
+                      }
+
+                      setIsGlobalSearchActionMenuOpen(false);
+                    } else if (event.key === "Enter") {
+                      event.preventDefault();
+                      if (selectedLiveSearchRow) {
+                        if (isGlobalSearchActionMenuOpen) {
+                          runGlobalSearchAction(
+                            selectedLiveSearchRow.latestMessage,
+                            globalSearchActionIndex,
+                          );
+                          return;
+                        }
+
+                        openGlobalSearchResult(
+                          selectedLiveSearchRow.latestMessage,
+                        );
+                        return;
+                      }
+
+                      setSearchQuery(globalSearchDraft);
+                      closeGlobalSearch();
+                    } else if (event.key === "Escape") {
+                      closeGlobalSearch();
+                    }
+                  }}
+                  placeholder="Search messages, addresses, attachments..."
+                  className="h-10 min-w-0 flex-1 rounded-[var(--radius-ryze-md)] border border-[var(--border-0)] bg-[var(--bg-2)] px-3 font-mono-jetbrains text-[13px] text-[var(--fg-0)] outline-none placeholder:text-[var(--fg-3)] focus:border-[var(--ryze-accent)]"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery(globalSearchDraft);
+                    closeGlobalSearch();
+                  }}
+                  className="h-10 rounded-[var(--radius-ryze-md)] bg-[var(--ryze-accent)] px-4 text-[12px] font-medium text-[var(--ryze-accent-fg)] transition-colors hover:bg-[var(--ryze-accent-hover)]"
+                >
+                  Search
+                </button>
+                </div>
+
+                <div className="mt-2 max-h-[320px] overflow-y-auto rounded-[var(--radius-ryze-md)] border border-[var(--border-subtle)] bg-[var(--bg-0)]">
+                  {globalSearchDraft.trim().length === 0 ? (
+                    <p className="px-3 py-3 text-[12px] text-[var(--fg-3)]">
+                      Start typing to see matching emails.
+                    </p>
+                  ) : liveSearchRows.length === 0 ? (
+                    <p className="px-3 py-3 text-[12px] text-[var(--fg-3)]">
+                      No matching emails.
+                    </p>
+                  ) : (
+                    liveSearchRows.map((row, index) => {
+                      const isSelected = index === globalSearchSelectedIndex;
+                      const showActions =
+                        isSelected && isGlobalSearchActionMenuOpen;
+
+                      return (
+                        <div
+                          key={row.threadKey}
+                          className="relative border-b border-[var(--border-subtle)] last:border-b-0"
+                        >
+                          <button
+                            type="button"
+                            onMouseEnter={() =>
+                              setGlobalSearchSelectedIndex(index)
+                            }
+                            onClick={() =>
+                              openGlobalSearchResult(row.latestMessage)
+                            }
+                            className={cn(
+                              "flex w-full items-start justify-between gap-3 px-3 py-2 text-left transition-colors",
+                              isSelected
+                                ? "bg-[var(--bg-2)]"
+                                : "hover:bg-[var(--bg-1)]",
+                            )}
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-[13px] text-[var(--fg-0)]">
+                                {row.latestMessage.subject}
+                              </p>
+                              <p className="truncate text-[11px] text-[var(--fg-2)]">
+                                {row.latestMessage.sender.name} · {row.latestMessage.preview}
+                              </p>
+                            </div>
+                            <span className="shrink-0 rounded-[4px] border border-[var(--border-0)] px-1.5 py-0.5 font-mono-jetbrains text-[10px] text-[var(--fg-3)]">
+                              {row.threadCount}
+                            </span>
+                          </button>
+
+                          <AnimatePresence>
+                            {showActions && (
+                              <motion.div
+                                initial={{ opacity: 0, x: 8, scale: 0.98 }}
+                                animate={{ opacity: 1, x: 0, scale: 1 }}
+                                exit={{ opacity: 0, x: 8, scale: 0.98 }}
+                                transition={{ duration: 0.14 }}
+                                className="absolute right-3 top-1/2 z-10 flex -translate-y-1/2 gap-1 rounded-[var(--radius-ryze-md)] border border-[var(--border-1)] bg-[var(--bg-3)] p-1 shadow-[0_16px_48px_-12px_oklch(0_0_0_/_0.6)]"
+                              >
+                                <button
+                                  type="button"
+                                  onMouseEnter={() =>
+                                    setGlobalSearchActionIndex(0)
+                                  }
+                                  onClick={() =>
+                                    runGlobalSearchAction(row.latestMessage, 0)
+                                  }
+                                  className={cn(
+                                    "flex items-center gap-1.5 rounded-[var(--radius-ryze-sm)] px-2 py-1.5 text-[11px] transition-colors",
+                                    globalSearchActionIndex === 0
+                                      ? "bg-[var(--ryze-accent)] text-[var(--ryze-accent-fg)]"
+                                      : "text-[var(--fg-1)] hover:bg-[var(--bg-4)]",
+                                  )}
+                                >
+                                  <Reply size={12} />
+                                  Reply
+                                </button>
+                                <button
+                                  type="button"
+                                  onMouseEnter={() =>
+                                    setGlobalSearchActionIndex(1)
+                                  }
+                                  onClick={() =>
+                                    runGlobalSearchAction(row.latestMessage, 1)
+                                  }
+                                  className={cn(
+                                    "flex items-center gap-1.5 rounded-[var(--radius-ryze-sm)] px-2 py-1.5 text-[11px] transition-colors",
+                                    globalSearchActionIndex === 1
+                                      ? "bg-[var(--ryze-accent)] text-[var(--ryze-accent-fg)]"
+                                      : "text-[var(--fg-1)] hover:bg-[var(--bg-4)]",
+                                  )}
+                                >
+                                  <Forward size={12} />
+                                  Forward
+                                </button>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                <p className="mt-2 px-1 font-mono-jetbrains text-[10.5px] text-[var(--fg-3)]">
+                  Shortcut: Shift + Space. Press Enter to apply, Esc to close.
+                </p>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      <div className="flex items-center justify-between border-t border-[var(--border-subtle)] bg-[var(--bg-1)] px-3 font-mono-jetbrains text-[11px] text-[var(--fg-2)]">
+        <div className="flex min-w-0 items-center gap-3 truncate">
+          <span className="text-[var(--success-token)]">{statusSummary}</span>
+          <span>encrypted at rest</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span>~/ryze/db.sqlite · {emails.length}MB</span>
+          <span>v0.4.2</span>
+        </div>
+      </div>
+
+      {isSessionLocked && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/45 backdrop-blur-sm">
+          <div className="w-[320px] rounded-[var(--radius-ryze-lg)] border border-[var(--border-1)] bg-[var(--bg-2)] p-6 text-center shadow-[0_16px_48px_-12px_oklch(0_0_0_/_0.6)]">
+            <p className="text-[20px] font-medium text-[var(--fg-0)]">
+              Session locked
+            </p>
+            <p className="mt-2 text-[13px] text-[var(--fg-2)]">
+              The inbox paused after inactivity. Resume when you are ready.
+            </p>
+            <button
+              onClick={() => setIsSessionLocked(false)}
+              className="mt-5 rounded-[var(--radius-ryze-md)] bg-[var(--ryze-accent)] px-4 py-2 text-[13px] font-medium text-[var(--ryze-accent-fg)] transition-colors hover:bg-[var(--ryze-accent-hover)]"
+            >
+              Resume session
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function findFolderIdByKnownName(
+  mailFolders: MailFolder[],
+  knownName: string,
+): string {
+  return (
+    mailFolders.find((folder) => folder.wellKnownName === knownName)?.id ||
+    knownName
+  );
+}
+
+function TutorialOverlay({
+  step,
+  setStep,
+  onOpenSettings,
+  isSettingsOpen,
+}: {
+  step: number;
+  setStep: (step: number) => void;
+  onOpenSettings: () => void;
+  isSettingsOpen: boolean;
+}) {
+  if (isSettingsOpen && step === 2) return null;
+
+  const complete = () => {
+    window.localStorage.setItem("ryze_tutorial_done", "true");
+    setStep(0);
+  };
+
+  let content = null;
+  let positionClass = "items-center justify-center";
+  let alignClass = "text-center items-center";
+
+  switch (step) {
+    case 1:
+      content = (
+        <>
+          <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-[var(--radius-ryze-lg)] bg-[var(--ryze-accent-soft)] text-[var(--ryze-accent)]">
+            <Sparkles size={28} strokeWidth={1.5} />
+          </div>
+          <h2 className="mb-3 text-[20px] font-medium text-[var(--fg-0)]">
+            Welcome to RYZE
+          </h2>
+          <p className="mb-8 text-[13px] leading-relaxed text-[var(--fg-2)]">
+            Your inbox is yours. Connect an account to start reading mail locally.
+          </p>
+          <button
+            onClick={() => setStep(2)}
+            className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-ryze-md)] bg-[var(--ryze-accent)] px-4 py-2.5 text-[13px] font-medium text-[var(--ryze-accent-fg)] transition-colors hover:bg-[var(--ryze-accent-hover)]"
+          >
+            Continue <ArrowRight size={16} />
+          </button>
+        </>
+      );
+      break;
+    case 2:
+      positionClass = "items-end justify-start pb-20 pl-4";
+      alignClass = "text-left items-start";
+      content = (
+        <>
+          <h2 className="mb-3 text-[18px] font-medium text-[var(--fg-0)]">
+            Add your account
+          </h2>
+          <p className="mb-6 text-[13px] leading-relaxed text-[var(--fg-2)]">
+            Open settings and connect your Microsoft account.
+          </p>
+          <button
+            onClick={onOpenSettings}
+            className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-ryze-md)] bg-[var(--ryze-accent)] px-4 py-2.5 text-[13px] font-medium text-[var(--ryze-accent-fg)] transition-colors hover:bg-[var(--ryze-accent-hover)]"
+          >
+            Open settings
+          </button>
+        </>
+      );
+      break;
+    case 3:
+      positionClass = "items-center justify-start pl-[280px]";
+      alignClass = "text-left items-start";
+      content = (
+        <>
+          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-[var(--radius-ryze-lg)] bg-[var(--ryze-accent-soft)] text-[var(--ryze-accent)]">
+            <CheckCircle2 size={24} strokeWidth={1.5} />
+          </div>
+          <h2 className="mb-3 text-[18px] font-medium text-[var(--fg-0)]">
+            Account connected
+          </h2>
+          <p className="mb-6 text-[13px] leading-relaxed text-[var(--fg-2)]">
+            You can right-click folders and labels to rename, empty, or delete
+            them.
+          </p>
+          <button
+            onClick={() => setStep(4)}
+            className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-ryze-md)] bg-[var(--ryze-accent)] px-4 py-2.5 text-[13px] font-medium text-[var(--ryze-accent-fg)] transition-colors hover:bg-[var(--ryze-accent-hover)]"
+          >
+            Good to know
+          </button>
+        </>
+      );
+      break;
+    case 4:
+      content = (
+        <>
+          <h2 className="mb-3 text-[18px] font-medium text-[var(--fg-0)]">
+            Learn the basics
+          </h2>
+          <p className="mb-8 text-[13px] leading-relaxed text-[var(--fg-2)]">
+            Review compose and folder controls, or enter your inbox now.
+          </p>
+          <div className="flex w-full gap-3">
+            <button
+              onClick={() => setStep(5)}
+              className="flex-1 rounded-[var(--radius-ryze-md)] border border-[var(--border-0)] px-4 py-2.5 text-[13px] font-medium text-[var(--fg-1)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
+            >
+              Show me
+            </button>
+            <button
+              onClick={complete}
+              className="flex-1 rounded-[var(--radius-ryze-md)] bg-[var(--ryze-accent)] px-4 py-2.5 text-[13px] font-medium text-[var(--ryze-accent-fg)] transition-colors hover:bg-[var(--ryze-accent-hover)]"
+            >
+              Enter inbox
+            </button>
+          </div>
+        </>
+      );
+      break;
+    case 5:
+      positionClass = "items-start justify-start pl-[280px] pt-32";
+      alignClass = "text-left items-start";
+      content = (
+        <>
+          <h2 className="mb-3 text-[18px] font-medium text-[var(--fg-0)]">
+            Compose and folders
+          </h2>
+          <p className="mb-6 text-[13px] leading-relaxed text-[var(--fg-2)]">
+            Press <strong>C</strong> to compose. <br />
+            <br />
+            Use the folder and label section controls to organize mail.
+          </p>
+          <button
+            onClick={() => setStep(6)}
+            className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-ryze-md)] bg-[var(--ryze-accent)] px-4 py-2.5 text-[13px] font-medium text-[var(--ryze-accent-fg)] transition-colors hover:bg-[var(--ryze-accent-hover)]"
+          >
+            Next
+          </button>
+        </>
+      );
+      break;
+    case 6:
+      content = (
+        <>
+          <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-[var(--radius-ryze-lg)] bg-[var(--ryze-accent-soft)] text-[var(--ryze-accent)]">
+            <Sparkles size={28} strokeWidth={1.5} />
+          </div>
+          <h2 className="mb-3 text-[20px] font-medium text-[var(--fg-0)]">
+            RYZE Mail is ready
+          </h2>
+          <p className="mb-8 text-[13px] leading-relaxed text-[var(--fg-2)]">
+            Your inbox is ready.
+          </p>
+          <button
+            onClick={complete}
+            className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-ryze-md)] bg-[var(--ryze-accent)] px-4 py-2.5 text-[13px] font-medium text-[var(--ryze-accent-fg)] transition-colors hover:bg-[var(--ryze-accent-hover)]"
+          >
+            Enter inbox
+          </button>
+        </>
+      );
+      break;
+  }
+
+  return (
+    <div
+      className={cn(
+        "pointer-events-auto fixed inset-0 z-[9999] flex bg-black/40 backdrop-blur-sm transition-all duration-300",
+        positionClass,
+      )}
+    >
+      <motion.div
+        key={step}
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: -10 }}
+        className={cn(
+          "relative flex w-full max-w-[360px] flex-col overflow-hidden rounded-[var(--radius-ryze-lg)] border border-[var(--border-1)] bg-[var(--bg-2)] p-8 shadow-[0_16px_48px_-12px_oklch(0_0_0_/_0.6)]",
+          alignClass,
+        )}
+      >
+        {content}
+      </motion.div>
+    </div>
+  );
+}
