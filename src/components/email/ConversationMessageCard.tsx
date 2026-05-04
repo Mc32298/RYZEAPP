@@ -6,6 +6,7 @@ import {
   getConversationFolderLabel,
   getConversationSenderName,
 } from "./threadMessageRendering";
+import { SandboxedEmailFrame } from "./SandboxedEmailFrame";
 
 interface ConversationMessageCardProps {
   email: EmailThread;
@@ -16,6 +17,7 @@ interface ConversationMessageCardProps {
   visibleHtml: string;
   quotedHtml: string;
   showQuoted: boolean;
+  isDarkMode: boolean;
   onToggleExpanded: () => void;
   onToggleQuoted: () => void;
   onFocus: () => void;
@@ -35,6 +37,7 @@ export function ConversationMessageCard({
   visibleHtml,
   quotedHtml,
   showQuoted,
+  isDarkMode,
   onToggleExpanded,
   onToggleQuoted,
   onFocus,
@@ -95,9 +98,10 @@ export function ConversationMessageCard({
 
       {isExpanded && (
         <div className="border-t border-[var(--border-subtle)] px-4 pb-4 pt-3">
-          <div
-            className="prose prose-invert max-w-none text-[var(--fg-0)]"
-            dangerouslySetInnerHTML={{ __html: visibleHtml }}
+          <SandboxedEmailFrame
+            html={visibleHtml}
+            isDarkMode={isDarkMode}
+            className="prose prose-invert max-w-none"
           />
 
           {quotedHtml && (
@@ -110,10 +114,12 @@ export function ConversationMessageCard({
                 {showQuoted ? "Hide quoted text" : "Show quoted text"}
               </button>
               {showQuoted && (
-                <div
-                  className="mt-3 border-l border-[var(--border-1)] pl-4 text-[var(--fg-3)]"
-                  dangerouslySetInnerHTML={{ __html: quotedHtml }}
-                />
+                <div className="mt-3 border-l border-[var(--border-1)] pl-4">
+                  <SandboxedEmailFrame
+                    html={quotedHtml}
+                    isDarkMode={isDarkMode}
+                  />
+                </div>
               )}
             </div>
           )}

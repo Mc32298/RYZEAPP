@@ -14,7 +14,7 @@
 // =============================================================================
 import { autoUpdater } from "electron-updater";
 import * as electron from "electron";
-import "dotenv/config";
+import { config as loadDotenv } from "dotenv";
 import * as path from "path";
 import * as fs from "fs";
 import http from "http"; // Used for the local OAuth callback server
@@ -31,6 +31,12 @@ import { parseStoredAttachments, shouldUseLocalMessageBody } from "./mailBodyCac
 const electronApi =
   (electron as unknown as { default?: typeof electron }).default ?? electron;
 const { app, BrowserWindow, ipcMain, shell, safeStorage, dialog } = electronApi;
+
+// Load .env only in development — packaged builds use real env vars.
+// Prevents a rogue .env dropped next to the binary from hijacking OAuth config or API keys.
+if (!app.isPackaged) {
+  loadDotenv();
+}
 
 // Polyfill __filename / __dirname for ESM (not available natively in ES modules)
 const __filename = fileURLToPath(import.meta.url);
@@ -207,7 +213,6 @@ interface GraphMailFolderListResponse {
 
 interface MicrosoftOAuthEnv {
   clientId: string;
-  clientSecret?: string;
   tenantId: string;
   redirectUri: string;
   scope: string;
@@ -832,6 +837,25 @@ function getGeminiApiVersion() {
   return process.env.GEMINI_API_VERSION?.trim() || "v1";
 }
 
+/**
+ * Server-side defense-in-depth strip for outgoing email HTML.
+ * The renderer's ComposeDrawer already runs DOMPurify, so this catches anything
+ * that slips through a compromised renderer before it reaches Microsoft Graph.
+ * We only need to kill executable content — legitimate formatting must survive.
+ */
+function sanitizeOutgoingHtml(html: string): string {
+  return html
+    // Remove executable tags entirely (including their content)
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
+    .replace(/<object[\s\S]*?<\/object>/gi, "")
+    .replace(/<embed[\s\S]*?>/gi, "")
+    // Strip inline event handlers (on* attributes)
+    .replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, "")
+    // Strip javascript: / vbscript: from href/src/action
+    .replace(/(href|src|action)\s*=\s*["']?\s*(?:javascript|vbscript)\s*:[^"'>]*/gi, "");
+}
+
 function stripHtmlForAi(input: string) {
   return input
     .replace(/<script[\s\S]*?<\/script>/gi, "")
@@ -922,6 +946,46 @@ function validateAiEmailPayload(payload: any) {
     body: optionalString(payload?.body, "body", 500_000),
     preview: optionalString(payload?.preview, "preview", 5000),
   };
+}
+
+function sanitizeBackendSettings(settings: unknown) {
+  const value = settings && typeof settings === "object" ? settings as Record<string, unknown> : {};
+  const aiProvider = optionalString(value.aiProvider, "aiProvider", 32).trim();
+  const geminiModel = optionalString(value.geminiModel, "geminiModel", 64).trim();
+  const ollamaBaseUrl = optionalString(value.ollamaBaseUrl, "ollamaBaseUrl", 512).trim();
+  const ollamaModel = optionalString(value.ollamaModel, "ollamaModel", 128).trim();
+
+  return {
+    aiProvider: aiProvider === "ollama" ? "ollama" : "gemini",
+    geminiModel: geminiModel || "gemini-2.5-flash",
+    ollamaBaseUrl: ollamaBaseUrl || "http://127.0.0.1:11434",
+    ollamaModel: ollamaModel || "llama3.2",
+  };
+}
+
+function sanitizeDraftsPayload(drafts: unknown) {
+  if (!Array.isArray(drafts)) {
+    throw new Error("drafts must be an array");
+  }
+
+  return drafts.slice(0, 20).map((draft, index) => {
+    const value = draft && typeof draft === "object" ? draft as Record<string, unknown> : {};
+    const id = optionalString(value.id, `drafts[${index}].id`, 128).trim();
+
+    return {
+      id: id || `draft-${crypto.randomUUID()}`,
+      to: optionalString(value.to, `drafts[${index}].to`, 4096),
+      cc: optionalString(value.cc, `drafts[${index}].cc`, 4096),
+      subject: optionalString(value.subject, `drafts[${index}].subject`, 512),
+      body: sanitizeOutgoingHtml(
+        optionalString(value.body, `drafts[${index}].body`, 500_000),
+      ),
+      isMinimized: Boolean(value.isMinimized),
+      isFullscreen: Boolean(value.isFullscreen),
+      aiTone: optionalString(value.aiTone, `drafts[${index}].aiTone`, 32) || undefined,
+      aiHint: optionalString(value.aiHint, `drafts[${index}].aiHint`, 2048) || undefined,
+    };
+  });
 }
 
 function optionalString(
@@ -1181,18 +1245,14 @@ function toBase64Url(value: Buffer | string) {
  * Optional:
  *   MICROSOFT_OAUTH_TENANT_ID   (defaults to 'common')
  *   MICROSOFT_OAUTH_SCOPE       (defaults to openid + mail scopes)
- *   MICROSOFT_OAUTH_CLIENT_SECRET
  */
 function getMicrosoftOAuthEnv(): MicrosoftOAuthEnv {
-  // 👇 Drop your actual Client ID right here
   const clientId =
     process.env.MICROSOFT_OAUTH_CLIENT_ID?.trim() ||
-    process.env.VITE_MICROSOFT_OAUTH_CLIENT_ID?.trim() ||
-    "b32a0e59-d61f-4655-981c-a18266e0af4f";
+    process.env.VITE_MICROSOFT_OAUTH_CLIENT_ID?.trim();
 
   const tenantId = process.env.MICROSOFT_OAUTH_TENANT_ID?.trim() || "common";
 
-  // 👇 Drop your actual Redirect URI right here
   const redirectUri =
     process.env.MICROSOFT_OAUTH_REDIRECT_URI?.trim() ||
     process.env.VITE_MICROSOFT_OAUTH_REDIRECT_URI?.trim() ||
@@ -1235,7 +1295,6 @@ function getMicrosoftOAuthEnv(): MicrosoftOAuthEnv {
 
   return {
     clientId,
-    clientSecret: process.env.MICROSOFT_OAUTH_CLIENT_SECRET?.trim(),
     tenantId,
     redirectUri,
     scope,
@@ -1363,7 +1422,6 @@ function getAiProviderKeyStatus(provider: AiProvider) {
 async function exchangeRefreshToken(
   refreshToken: string,
   clientId: string,
-  clientSecret: string | undefined,
   tenantId: string,
   scope: string,
 ) {
@@ -1374,10 +1432,6 @@ async function exchangeRefreshToken(
     refresh_token: refreshToken,
     scope,
   });
-
-  if (clientSecret) {
-    refreshParams.set("client_secret", clientSecret);
-  }
 
   const refreshResponse = await fetch(`${authority}/token`, {
     method: "POST",
@@ -1407,7 +1461,7 @@ async function exchangeRefreshToken(
 const activeTokenRefreshPromises = new Map<string, Promise<string>>();
 
 async function getValidMicrosoftAccessToken(accountId: string) {
-  const { clientId, clientSecret, tenantId, scope } = getMicrosoftOAuthEnv();
+  const { clientId, tenantId, scope } = getMicrosoftOAuthEnv();
   const tokens = loadMicrosoftTokens();
   const token = tokens[accountId];
 
@@ -1430,7 +1484,6 @@ async function getValidMicrosoftAccessToken(accountId: string) {
       const refreshed = await exchangeRefreshToken(
         token.refreshToken!,
         clientId,
-        clientSecret,
         tenantId,
         scope,
       );
@@ -2592,7 +2645,30 @@ ipcMain.handle("ai:delete-provider-key", (_event, payload) => {
   return getAiProviderKeyStatus(provider);
 });
 
+// Simple sliding-window rate limiter for AI calls.
+// Prevents a bug or runaway UI loop from burning through the user's API key.
+class RateLimiter {
+  private timestamps: number[] = [];
+  constructor(
+    private readonly maxCalls: number,
+    private readonly windowMs: number,
+  ) {}
+
+  allow(): boolean {
+    const now = Date.now();
+    this.timestamps = this.timestamps.filter((t) => now - t < this.windowMs);
+    if (this.timestamps.length >= this.maxCalls) return false;
+    this.timestamps.push(now);
+    return true;
+  }
+}
+
+const aiRateLimiter = new RateLimiter(10, 60_000); // 10 calls per minute
+
 ipcMain.handle("ai:summarize-email", async (_event, payload) => {
+  if (!aiRateLimiter.allow()) {
+    throw new Error("Too many AI requests. Please wait a moment before summarising another email.");
+  }
   const email = validateAiEmailPayload(payload);
 
   const plainBody = limitAiInput(
@@ -2936,9 +3012,11 @@ ipcMain.handle("system:get-storage-usage", () => {
 });
 
 ipcMain.on("system:update-settings", (_event, settings) => {
-  // We will save these settings to a file so the backend sync logic
-  // can use them later (e.g., stopping sync for old emails)
-  fs.writeFileSync(settingsFilePath, JSON.stringify(settings, null, 2), "utf8");
+  const backendSettings = sanitizeBackendSettings(settings);
+  fs.writeFileSync(settingsFilePath, JSON.stringify(backendSettings, null, 2), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
 });
 
 ipcMain.handle("microsoft-mail:syncFolders", async (_event, payload) => {
@@ -2972,14 +3050,14 @@ const draftsFilePath = path.join(app.getPath("userData"), "ryze-drafts.enc");
 
 ipcMain.handle("system:get-drafts", () => {
   try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      console.warn("Secure storage unavailable — drafts cannot be loaded.");
+      return [];
+    }
+
     if (!fs.existsSync(draftsFilePath)) return [];
 
     const encryptedData = fs.readFileSync(draftsFilePath);
-
-    if (!safeStorage.isEncryptionAvailable()) {
-      return JSON.parse(encryptedData.toString("utf8"));
-    }
-
     const decryptedData = safeStorage.decryptString(encryptedData);
     return JSON.parse(decryptedData);
   } catch (error) {
@@ -2989,17 +3067,28 @@ ipcMain.handle("system:get-drafts", () => {
 });
 
 ipcMain.on("system:save-drafts", (_event, drafts) => {
-  try {
-    const payload = JSON.stringify(drafts);
-
-    if (!safeStorage.isEncryptionAvailable()) {
-      fs.writeFileSync(draftsFilePath, payload, "utf8");
-    } else {
-      const encryptedData = safeStorage.encryptString(payload);
-      fs.writeFileSync(draftsFilePath, encryptedData);
+  if (!safeStorage.isEncryptionAvailable()) {
+    console.error("Secure storage unavailable — drafts will not be saved to disk.");
+    const windows = BrowserWindow.getAllWindows();
+    if (windows.length > 0) {
+      windows[0].webContents.send("drafts:save-failed", "Secure storage is unavailable on this system. Drafts cannot be saved.");
     }
+    return;
+  }
+
+  try {
+    const payload = JSON.stringify(sanitizeDraftsPayload(drafts));
+    const encryptedData = safeStorage.encryptString(payload);
+    fs.writeFileSync(draftsFilePath, encryptedData, { mode: 0o600 });
   } catch (error) {
     console.error("Failed to securely save drafts:", error);
+    const windows = BrowserWindow.getAllWindows();
+    if (windows.length > 0) {
+      windows[0].webContents.send(
+        "drafts:save-failed",
+        "Drafts could not be saved due to an encryption error.",
+      );
+    }
   }
 });
 
@@ -3394,7 +3483,7 @@ ipcMain.on("window-close", (event) => {
  *   5. Fetches the user's profile and stores everything encrypted
  */
 ipcMain.handle("microsoft-oauth:connect", async () => {
-  const { clientId, clientSecret, tenantId, redirectUri, scope } =
+  const { clientId, tenantId, redirectUri, scope } =
     getMicrosoftOAuthEnv();
 
   // PKCE: generate a random verifier and its SHA-256 challenge
@@ -3423,6 +3512,15 @@ ipcMain.handle("microsoft-oauth:connect", async () => {
   const authCode = await new Promise<string>((resolve, reject) => {
     const server = http.createServer((req, res) => {
       if (!req.url) return;
+
+      // Reject requests whose Host header doesn't exactly match our loopback address.
+      // Prevents DNS-rebinding attacks where a malicious page tries to hit this server.
+      const expectedHost = `${redirect.hostname}:${redirect.port}`;
+      if (req.headers.host !== expectedHost) {
+        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Bad request.");
+        return;
+      }
 
       const requestUrl = new URL(req.url, redirectUri);
 
@@ -3487,10 +3585,6 @@ ipcMain.handle("microsoft-oauth:connect", async () => {
     code_verifier: verifier,
     scope,
   });
-
-  if (clientSecret) {
-    tokenParams.set("client_secret", clientSecret);
-  }
 
   const tokenResponse = await fetch(`${authority}/token`, {
     method: "POST",
@@ -3607,7 +3701,7 @@ ipcMain.handle("microsoft-mail:send", async (_event, payload) => {
       subject: subject || "(No subject)",
       body: {
         contentType: "html",
-        content: body || " ",
+        content: sanitizeOutgoingHtml(body || " "),
       },
       toRecipients: parseRecipients(to),
       ccRecipients: parseRecipients(cc),
@@ -4253,7 +4347,63 @@ ipcMain.handle("microsoft-mail:move", async (_event, payload) => {
 // APP LIFECYCLE
 // =============================================================================
 
+// Content Security Policy strings.
+// All network I/O happens in the main process via IPC — the renderer never
+// calls external APIs directly, so connect-src can be 'self' only.
+// Email images load inside the sandboxed iframe (same-origin), so img-src
+// must allow https: to let remote images through when the user enables them.
+const CSP_PROD = [
+  "default-src 'self'",
+  "script-src 'self'",
+  // unsafe-inline is required for React inline style props
+  "style-src 'self' 'unsafe-inline'",
+  // https: covers remote email images inside the sandboxed iframe
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'none'",
+].join("; ");
+
+// Dev CSP is looser: Vite HMR needs ws:, unsafe-eval (source maps), unsafe-inline
+// (React SWC plugin injects an inline preamble script for fast refresh), and localhost
+const CSP_DEV = [
+  "default-src 'self' http://localhost:* ws://localhost:*",
+  "script-src 'self' http://localhost:* 'unsafe-eval' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' http://localhost:*",
+  "img-src 'self' data: blob: https: http://localhost:*",
+  "font-src 'self' data: http://localhost:*",
+  "connect-src 'self' ws://localhost:* http://localhost:*",
+  "frame-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'none'",
+].join("; ");
+
 app.whenReady().then(() => {
+  // Inject Content-Security-Policy on every response the renderer receives.
+  // This covers both file:// (production) and http://localhost (dev).
+  electron.session.defaultSession.webRequest.onHeadersReceived(
+    (details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          "Content-Security-Policy": [
+            app.isPackaged ? CSP_PROD : CSP_DEV,
+          ],
+        },
+      });
+    },
+  );
+
+  // Deny all permission requests (notifications, geolocation, media, etc.)
+  // The app has no legitimate need for any of these.
+  electron.session.defaultSession.setPermissionRequestHandler(
+    (_webContents, _permission, callback) => callback(false),
+  );
+
   createWindow();
 
   // Check for updates a few seconds after startup
