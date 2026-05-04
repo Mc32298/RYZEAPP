@@ -955,6 +955,7 @@ export function ReadingPane({
                       }))
                     }
                     onDownloadAttachment={onDownloadAttachment}
+                    isDarkMode={isDarkMode}
                   />
                 );
               })}
