@@ -33,7 +33,7 @@ docs/superpowers
 
 **/tempobook/dynamic/
 **/tempobook/storyboards/
-
+.gitignore
 core
 
 .github/

@@ -271,8 +271,17 @@ function sanitizeEmailHtml(html: string, blockRemoteImages: boolean): string {
 
   return DOMPurify.sanitize(normalizedHtml, {
     USE_PROFILES: { html: true },
+    // Explicit scheme allow-list — every permitted URI pattern is named here.
+    // The previous regex had an ambiguous third branch that was hard to audit.
+    // Breakdown:
+    //   https?:|mailto:|cid:|blob:|tel:  — safe explicit schemes
+    //   data:image\/                     — inline images only (blocks data:text/html etc.)
+    //   #                                — in-page anchor fragments
+    //   \/(?!\/)                         — absolute paths, NOT protocol-relative //evil.com
+    //   \.\.?\/                          — relative paths ./ and ../
+    //   \?                               — query strings
     ALLOWED_URI_REGEXP:
-      /^(?:(?:https?|mailto|cid|blob):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
+      /^(?:(?:https?|mailto|cid|blob|tel):|data:image\/|#|\/(?!\/)|\.\.?\/|\?)/i,
     ADD_TAGS: ["style"],
     ADD_ATTR: [
       "style",
@@ -299,6 +308,8 @@ function sanitizeEmailHtml(html: string, blockRemoteImages: boolean): string {
       "svg",
       "math",
     ],
+    // USE_PROFILES: { html: true } already strips all on* event handlers.
+    // These are belt-and-suspenders for the most commonly abused ones.
     FORBID_ATTR: [
       "srcdoc",
       "onerror",
@@ -309,6 +320,16 @@ function sanitizeEmailHtml(html: string, blockRemoteImages: boolean): string {
       "onblur",
       "onmouseenter",
       "onmouseleave",
+      "onkeydown",
+      "onkeyup",
+      "onkeypress",
+      "onsubmit",
+      "onchange",
+      "oninput",
+      "ondblclick",
+      "oncontextmenu",
+      "ondragstart",
+      "onpaste",
     ],
     ALLOW_DATA_ATTR: false,
   });
@@ -934,6 +955,7 @@ export function ReadingPane({
                       }))
                     }
                     onDownloadAttachment={onDownloadAttachment}
+                    isDarkMode={isDarkMode}
                   />
                 );
               })}

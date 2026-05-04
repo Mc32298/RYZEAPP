@@ -33,6 +33,8 @@ declare global {
       closeWindow: () => void;
       getDrafts: () => Promise<any[]>;
       saveDrafts: (drafts: any[]) => void;
+      onDraftsSaveFailed: (callback: (message: string) => void) => void;
+      removeDraftsListeners: () => void;
       getMicrosoftCalendarEvents: (accountId: string) => Promise<any[]>;
       getAllLocalEmails: () => Promise<{
         folders: any[];
