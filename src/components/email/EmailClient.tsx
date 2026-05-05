@@ -26,7 +26,10 @@ import {
   getMailboxRefreshFolderIds,
 } from "./mailboxMutation";
 import { resolveMailMoveOperation } from "./mailMoveRouting";
-import { resolveManualSyncProvider } from "./mailSyncRouting";
+import {
+  refreshMailboxAfterReply,
+  resolveManualSyncProvider,
+} from "./mailSyncRouting";
 import {
   createComposeDraft,
   resolveCurrentUserEmail,
@@ -2033,16 +2036,20 @@ export function EmailClient() {
       }
 
       toast.success("Reply sent");
-      if (provider === "google") {
-        window.electronAPI?.syncGmailEmails?.(accountId).catch(console.error);
-      } else {
-        window.electronAPI?.syncMicrosoftInbox?.(accountId).catch(console.error);
-      }
+      await refreshMailboxAfterReply({
+        provider: resolveManualSyncProvider(provider),
+        accountId,
+        syncGmailEmails: window.electronAPI?.syncGmailEmails,
+        syncMicrosoftEmails: window.electronAPI?.syncMicrosoftEmails,
+        syncMicrosoftInbox: window.electronAPI?.syncMicrosoftInbox,
+        refreshLocalUi: fetchLocalAndSetUI,
+      });
     },
     [
       accounts,
       currentAccount,
       currentAccountId,
+      fetchLocalAndSetUI,
       settings.signature,
     ],
   );
