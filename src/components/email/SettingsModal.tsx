@@ -39,10 +39,13 @@ interface SettingsModalProps {
   onAccountChange: (updates: Partial<Account>) => void;
   onSettingsChange: (updates: Partial<EmailSettings>) => void;
   onConnectMicrosoft: () => void;
+  onConnectGoogle: () => void;
   onDeleteAccount: (accountId: string) => void;
   realStorageGB: number;
   isConnectingMicrosoft: boolean;
   connectMicrosoftError: string | null;
+  isConnectingGoogle: boolean;
+  connectGoogleError: string | null;
 }
 
 type TabType =
@@ -312,13 +315,18 @@ export function SettingsModal({
   onAccountChange,
   onSettingsChange,
   onConnectMicrosoft,
+  onConnectGoogle,
   onDeleteAccount,
   isConnectingMicrosoft,
   connectMicrosoftError,
+  isConnectingGoogle,
+  connectGoogleError,
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = React.useState<TabType>("accounts");
   const [isAddEmailOpen, setIsAddEmailOpen] = React.useState(false);
   const [hasStartedMicrosoftConnect, setHasStartedMicrosoftConnect] =
+    React.useState(false);
+  const [hasStartedGoogleConnect, setHasStartedGoogleConnect] =
     React.useState(false);
   const [geminiApiKeyDraft, setGeminiApiKeyDraft] = React.useState("");
   const [geminiKeyStatus, setGeminiKeyStatus] =
@@ -420,22 +428,27 @@ export function SettingsModal({
   React.useEffect(() => {
     if (!isAddEmailOpen) {
       setHasStartedMicrosoftConnect(false);
+      setHasStartedGoogleConnect(false);
       return;
     }
 
-    if (
-      hasStartedMicrosoftConnect &&
-      !isConnectingMicrosoft &&
-      !connectMicrosoftError
-    ) {
+    if (hasStartedMicrosoftConnect && !isConnectingMicrosoft && !connectMicrosoftError) {
       setIsAddEmailOpen(false);
       setHasStartedMicrosoftConnect(false);
+    }
+
+    if (hasStartedGoogleConnect && !isConnectingGoogle && !connectGoogleError) {
+      setIsAddEmailOpen(false);
+      setHasStartedGoogleConnect(false);
     }
   }, [
     isAddEmailOpen,
     hasStartedMicrosoftConnect,
     isConnectingMicrosoft,
     connectMicrosoftError,
+    hasStartedGoogleConnect,
+    isConnectingGoogle,
+    connectGoogleError,
   ]);
 
   const renderContent = () => {
@@ -474,18 +487,20 @@ export function SettingsModal({
                         <p className="truncate text-xs font-mono-jetbrains text-[var(--fg-3)]">
                           {account.provider === "microsoft"
                             ? "outlook.office365.com  ·  OAuth2"
+                            : account.provider === "google"
+                            ? "gmail.googleapis.com  ·  OAuth2"
                             : "imap.fastmail.com  ·  TLS"}
                         </p>
                       </div>
                       <span
                         className={cn(
                           "rounded-[4px] border px-2 py-1 font-mono-jetbrains text-[10px]",
-                          account.provider === "microsoft"
+                          account.provider === "microsoft" || account.provider === "google"
                             ? "border-[var(--success-token)] text-[var(--success-token)]"
                             : "border-[var(--warning-token)] text-[var(--warning-token)]",
                         )}
                       >
-                        {account.provider === "microsoft" ? "ok" : "auth"}
+                        {account.provider === "microsoft" || account.provider === "google" ? "ok" : "auth"}
                       </span>
                       <button
                         type="button"
@@ -596,7 +611,7 @@ export function SettingsModal({
                           {account.email}
                         </p>
                         <p className="mt-1 font-mono-jetbrains text-[11px] text-[var(--fg-3)]">
-                          {account.provider === "microsoft"
+                          {account.provider === "microsoft" || account.provider === "google"
                             ? "OAuth2 active"
                             : "App-password or IMAP credential flow"}
                         </p>
@@ -1245,7 +1260,7 @@ export function SettingsModal({
                         Add Email
                       </h4>
                       <p className="mt-1 text-sm  text-[var(--fg-2)]">
-                        Connect Outlook or Hotmail with Microsoft OAuth2.
+                        Connect Outlook, Gmail, or another provider with OAuth2.
                       </p>
                     </div>
                     <button
@@ -1257,29 +1272,52 @@ export function SettingsModal({
                     </button>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setHasStartedMicrosoftConnect(true);
-                      onConnectMicrosoft();
-                    }}
-                    disabled={isConnectingMicrosoft}
-                    className={cn(
-                      "mt-5 flex w-full items-center justify-center gap-2 rounded-[var(--radius-ryze-sm)] border px-3 py-2.5 text-sm  transition-colors",
-                      isConnectingMicrosoft
-                        ? "cursor-not-allowed border-[var(--border-subtle)] bg-[var(--bg-1)] text-[var(--fg-3)]"
-                        : "border-[var(--border-0)] bg-[var(--bg-0)] text-[var(--fg-1)] hover:border-[var(--ryze-accent)]",
-                    )}
-                  >
-                    <Mail size={14} />
-                    {isConnectingMicrosoft
-                      ? "Connecting..."
-                      : "Sign in with Microsoft"}
-                  </button>
+                  <div className="mt-5 flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHasStartedMicrosoftConnect(true);
+                        onConnectMicrosoft();
+                      }}
+                      disabled={isConnectingMicrosoft || isConnectingGoogle}
+                      className={cn(
+                        "flex w-full items-center justify-center gap-2 rounded-[var(--radius-ryze-sm)] border px-3 py-2.5 text-sm  transition-colors",
+                        isConnectingMicrosoft || isConnectingGoogle
+                          ? "cursor-not-allowed border-[var(--border-subtle)] bg-[var(--bg-1)] text-[var(--fg-3)]"
+                          : "border-[var(--border-0)] bg-[var(--bg-0)] text-[var(--fg-1)] hover:border-[var(--ryze-accent)]",
+                      )}
+                    >
+                      <Mail size={14} />
+                      {isConnectingMicrosoft ? "Connecting..." : "Sign in with Microsoft"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHasStartedGoogleConnect(true);
+                        onConnectGoogle();
+                      }}
+                      disabled={isConnectingGoogle || isConnectingMicrosoft}
+                      className={cn(
+                        "flex w-full items-center justify-center gap-2 rounded-[var(--radius-ryze-sm)] border px-3 py-2.5 text-sm  transition-colors",
+                        isConnectingGoogle || isConnectingMicrosoft
+                          ? "cursor-not-allowed border-[var(--border-subtle)] bg-[var(--bg-1)] text-[var(--fg-3)]"
+                          : "border-[var(--border-0)] bg-[var(--bg-0)] text-[var(--fg-1)] hover:border-[var(--ryze-accent)]",
+                      )}
+                    >
+                      <Mail size={14} />
+                      {isConnectingGoogle ? "Connecting..." : "Sign in with Google"}
+                    </button>
+                  </div>
 
                   {connectMicrosoftError && (
                     <p className="mt-3 text-xs  text-[var(--danger-token)]">
                       {connectMicrosoftError}
+                    </p>
+                  )}
+                  {connectGoogleError && (
+                    <p className="mt-3 text-xs  text-[var(--danger-token)]">
+                      {connectGoogleError}
                     </p>
                   )}
                 </motion.div>

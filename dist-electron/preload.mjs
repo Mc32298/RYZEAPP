@@ -285,6 +285,47 @@ contextBridge.exposeInMainWorld("electronAPI", {
   deleteMicrosoftAccount: (accountId) => ipcRenderer.invoke("microsoft-account:delete", {
     accountId: assertString(accountId, "accountId", 256)
   }),
+  connectGoogleAccount: () => ipcRenderer.invoke("google-oauth:connect"),
+  deleteGoogleAccount: (accountId) => ipcRenderer.invoke("google-account:delete", {
+    accountId: assertString(accountId, "accountId", 256)
+  }),
+  syncGmailEmails: (accountId) => ipcRenderer.invoke("gmail:sync", {
+    accountId: assertString(accountId, "accountId", 256)
+  }),
+  getGmailEmailBody: (accountId, messageId) => ipcRenderer.invoke("gmail:get-body", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048)
+  }),
+  sendGmailEmail: (payload) => {
+    if (!payload || typeof payload !== "object") {
+      throw new TypeError("payload is required");
+    }
+    return ipcRenderer.invoke("gmail:send", {
+      accountId: assertString(payload.accountId, "accountId", 256),
+      to: assertString(payload.to, "to", 4096),
+      cc: optionalString(payload.cc, "cc", 4096),
+      subject: optionalString(payload.subject, "subject", 512),
+      body: optionalString(payload.body, "body", 5e5)
+    });
+  },
+  markGmailEmailAsRead: (accountId, messageId) => ipcRenderer.invoke("gmail:mark-read", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048)
+  }),
+  markGmailEmailAsUnread: (accountId, messageId) => ipcRenderer.invoke("gmail:mark-unread", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048)
+  }),
+  toggleGmailEmailStar: (accountId, messageId, isStarred) => ipcRenderer.invoke("gmail:toggle-star", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048),
+    isStarred
+  }),
+  moveGmailEmail: (accountId, messageId, destination) => ipcRenderer.invoke("gmail:move", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048),
+    destination: assertString(destination, "destination", 64)
+  }),
   markMicrosoftEmailAsUnread: (accountId, messageId) => ipcRenderer.invoke("microsoft-mail:mark-unread", {
     accountId: assertString(accountId, "accountId", 256),
     messageId: assertString(messageId, "messageId", 2048)

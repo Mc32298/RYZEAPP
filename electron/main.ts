@@ -20,6 +20,11 @@ import * as fs from "fs";
 import http from "http"; // Used for the local OAuth callback server
 import { resolveMarkReadValue } from "./mailReadState";
 import { buildGraphReplyPayload } from "./mailReplyPayload";
+import {
+  buildGoogleAuthorizationCodeParams,
+  buildGoogleRefreshTokenParams,
+  formatGoogleTokenExchangeError,
+} from "./googleOAuth";
 import crypto from "crypto"; // Used for PKCE code verifier / challenge generation
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
@@ -170,6 +175,12 @@ const microsoftTokenFilePath = path.join(
   "microsoft-oauth-tokens.json",
 );
 
+/** Stores encrypted Google OAuth tokens */
+const googleTokenFilePath = path.join(
+  app.getPath("userData"),
+  "google-oauth-tokens.json",
+);
+
 /** Stores encrypted user-provided AI provider keys */
 const aiProviderKeysFilePath = path.join(
   app.getPath("userData"),
@@ -232,6 +243,47 @@ interface MicrosoftStoredToken {
   tenantId?: string;
   redirectUri?: string;
   oauthScope?: string;
+}
+
+interface GoogleStoredToken {
+  accountId: string;
+  provider: "google";
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt: number;
+  scope: string;
+  tokenType: string;
+  clientId?: string;
+  oauthScope?: string;
+}
+
+interface GmailMessageHeader {
+  name: string;
+  value: string;
+}
+
+interface GmailMessagePart {
+  mimeType?: string;
+  body?: { data?: string; size?: number };
+  parts?: GmailMessagePart[];
+}
+
+interface GmailMessage {
+  id: string;
+  threadId?: string;
+  labelIds?: string[];
+  snippet?: string;
+  payload?: {
+    headers?: GmailMessageHeader[];
+    body?: { data?: string };
+    parts?: GmailMessagePart[];
+  };
+}
+
+interface GmailMessageListResponse {
+  messages?: Array<{ id: string; threadId: string }>;
+  nextPageToken?: string;
+  resultSizeEstimate?: number;
 }
 
 interface GraphMessageAddress {
@@ -1419,6 +1471,284 @@ function saveMicrosoftTokens(tokens: Record<string, MicrosoftStoredToken>) {
   } catch (error) {
     console.error("Failed to save Microsoft tokens:", error);
     throw error;
+  }
+}
+
+// =============================================================================
+// GOOGLE OAUTH CONFIG
+// Client ID for the desktop app. For native apps this is not a secret.
+// =============================================================================
+
+const GOOGLE_CLIENT_ID =
+  process.env.GOOGLE_OAUTH_CLIENT_ID?.trim() ||
+  "224714941754-rhbg9oqtj0vieilhj1p3fc4slai0ah09.apps.googleusercontent.com";
+
+const GOOGLE_REDIRECT_URI =
+  process.env.GOOGLE_OAUTH_REDIRECT_URI?.trim() ||
+  "http://127.0.0.1:42814/auth/google/callback";
+
+const GOOGLE_SCOPE =
+  "openid email profile " +
+  "https://www.googleapis.com/auth/gmail.readonly " +
+  "https://www.googleapis.com/auth/gmail.modify " +
+  "https://www.googleapis.com/auth/gmail.send";
+
+// Gmail system labels mapped to folder-like display names
+const GMAIL_SYSTEM_FOLDERS = [
+  { id: "INBOX",   displayName: "Inbox",   wellKnownName: "inbox",       depth: 0, path: "Inbox" },
+  { id: "SENT",    displayName: "Sent",    wellKnownName: "sentitems",   depth: 0, path: "Sent" },
+  { id: "DRAFT",   displayName: "Drafts",  wellKnownName: "drafts",      depth: 0, path: "Drafts" },
+  { id: "TRASH",   displayName: "Trash",   wellKnownName: "deleteditems",depth: 0, path: "Trash" },
+  { id: "STARRED", displayName: "Starred", wellKnownName: "",            depth: 0, path: "Starred" },
+  { id: "SPAM",    displayName: "Spam",    wellKnownName: "junkmail",    depth: 0, path: "Spam" },
+];
+
+// =============================================================================
+// GOOGLE TOKEN STORAGE
+// =============================================================================
+
+function loadGoogleTokens(): Record<string, GoogleStoredToken> {
+  try {
+    if (!fs.existsSync(googleTokenFilePath)) return {};
+    const fileContents = fs.readFileSync(googleTokenFilePath, "utf8");
+    if (!fileContents) return {};
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("Secure token storage is not available on this system");
+    }
+    const decoded = safeStorage.decryptString(Buffer.from(fileContents, "base64"));
+    return JSON.parse(decoded) as Record<string, GoogleStoredToken>;
+  } catch (error) {
+    console.error("Failed to load stored Google tokens:", error);
+    return {};
+  }
+}
+
+function saveGoogleTokens(tokens: Record<string, GoogleStoredToken>) {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("Secure token storage is not available on this system");
+    }
+    const content = safeStorage.encryptString(JSON.stringify(tokens)).toString("base64");
+    fs.writeFileSync(googleTokenFilePath, content, { encoding: "utf8", mode: 0o600 });
+  } catch (error) {
+    console.error("Failed to save Google tokens:", error);
+    throw error;
+  }
+}
+
+// =============================================================================
+// GOOGLE TOKEN REFRESH
+// =============================================================================
+
+const activeGoogleTokenRefreshPromises = new Map<string, Promise<string>>();
+
+async function getValidGoogleAccessToken(accountId: string): Promise<string> {
+  const tokens = loadGoogleTokens();
+  const token = tokens[accountId];
+
+  if (!token) throw new Error("No Google token stored for this account");
+  if (token.expiresAt > Date.now() + tokenRefreshLeadMs) return token.accessToken;
+  if (!token.refreshToken) {
+    throw new Error("Google refresh token missing. Please reconnect the account.");
+  }
+
+  const existing = activeGoogleTokenRefreshPromises.get(accountId);
+  if (existing) return existing;
+
+  const refreshPromise = (async () => {
+    try {
+      const clientId = token.clientId || GOOGLE_CLIENT_ID;
+      const params = buildGoogleRefreshTokenParams({
+        clientId,
+        refreshToken: token.refreshToken!,
+      });
+
+      const response = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString(),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(formatGoogleTokenExchangeError(response.status, errorText));
+      }
+
+      const refreshed = (await response.json()) as {
+        access_token: string;
+        expires_in: number;
+        scope?: string;
+        token_type: string;
+      };
+
+      const latestTokens = loadGoogleTokens();
+      latestTokens[accountId] = {
+        ...token,
+        accessToken: refreshed.access_token,
+        expiresAt: Date.now() + refreshed.expires_in * 1000,
+        scope: refreshed.scope || token.scope,
+        tokenType: refreshed.token_type || token.tokenType,
+        clientId,
+      };
+      saveGoogleTokens(latestTokens);
+      return latestTokens[accountId].accessToken;
+    } finally {
+      activeGoogleTokenRefreshPromises.delete(accountId);
+    }
+  })();
+
+  activeGoogleTokenRefreshPromises.set(accountId, refreshPromise);
+  return refreshPromise;
+}
+
+// =============================================================================
+// GMAIL API — HELPERS
+// =============================================================================
+
+function gmailParseHeader(headers: GmailMessageHeader[], name: string): string {
+  return headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+}
+
+function gmailParseAddress(raw: string): { name: string; address: string } {
+  const match = /^(.*?)\s*<([^>]+)>$/.exec(raw.trim());
+  if (match) return { name: match[1].replace(/^"|"$/g, "").trim(), address: match[2].trim() };
+  return { name: "", address: raw.trim() };
+}
+
+function gmailExtractBody(part: GmailMessagePart | undefined): { content: string; contentType: "text" | "html" } {
+  if (!part) return { content: "", contentType: "text" };
+
+  // Multipart: prefer html, fall back to plain
+  if (part.parts && part.parts.length > 0) {
+    const htmlPart = part.parts.find((p) => p.mimeType === "text/html");
+    const textPart = part.parts.find((p) => p.mimeType === "text/plain");
+
+    for (const candidate of [htmlPart, textPart]) {
+      if (!candidate) continue;
+      if (candidate.body?.data) {
+        const decoded = Buffer.from(candidate.body.data, "base64").toString("utf8");
+        return { content: decoded, contentType: candidate.mimeType === "text/html" ? "html" : "text" };
+      }
+      // Nested multipart
+      if (candidate.parts) {
+        const nested = gmailExtractBody(candidate);
+        if (nested.content) return nested;
+      }
+    }
+  }
+
+  // Single-part
+  if (part.body?.data) {
+    const decoded = Buffer.from(part.body.data, "base64").toString("utf8");
+    return { content: decoded, contentType: part.mimeType === "text/html" ? "html" : "text" };
+  }
+
+  return { content: "", contentType: "text" };
+}
+
+function gmailUpsertFolders(accountId: string) {
+  const upsertFolder = db.prepare(`
+    INSERT INTO folders (id, accountId, displayName, parentFolderId, wellKnownName, totalItemCount, unreadItemCount, depth, path)
+    VALUES (?, ?, ?, NULL, ?, 0, 0, ?, ?)
+    ON CONFLICT(accountId, id) DO UPDATE SET
+      displayName = excluded.displayName,
+      wellKnownName = excluded.wellKnownName,
+      depth = excluded.depth,
+      path = excluded.path
+  `);
+
+  for (const folder of GMAIL_SYSTEM_FOLDERS) {
+    upsertFolder.run(folder.id, accountId, folder.displayName, folder.wellKnownName, folder.depth, folder.path);
+  }
+}
+
+function gmailUpsertMessage(accountId: string, folderId: string, msg: GmailMessage) {
+  const headers = msg.payload?.headers ?? [];
+  const fromRaw = gmailParseHeader(headers, "From");
+  const { name: fromName, address: fromAddress } = gmailParseAddress(fromRaw);
+
+  const toRaw = gmailParseHeader(headers, "To");
+  const toRecipients = toRaw
+    ? JSON.stringify([{ emailAddress: gmailParseAddress(toRaw) }])
+    : "[]";
+
+  const ccRaw = gmailParseHeader(headers, "Cc");
+  const ccRecipients = ccRaw
+    ? JSON.stringify([{ emailAddress: gmailParseAddress(ccRaw) }])
+    : "[]";
+
+  const subject = gmailParseHeader(headers, "Subject");
+  const dateRaw = gmailParseHeader(headers, "Date");
+  const receivedDateTime = dateRaw ? new Date(dateRaw).toISOString() : new Date().toISOString();
+  const snippet = msg.snippet ?? "";
+  const isRead = !(msg.labelIds ?? []).includes("UNREAD") ? 1 : 0;
+  const isStarred = (msg.labelIds ?? []).includes("STARRED") ? 1 : 0;
+
+  const body = gmailExtractBody(msg.payload as GmailMessagePart | undefined);
+
+  db.prepare(`
+    INSERT INTO emails (
+      id, accountId, folder, subject, bodyPreview, bodyContentType, bodyContent,
+      receivedDateTime, isRead, hasAttachments, isStarred, fromName, fromAddress,
+      toRecipients, ccRecipients
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      folder             = excluded.folder,
+      subject            = CASE WHEN excluded.subject <> '' THEN excluded.subject ELSE emails.subject END,
+      bodyPreview        = CASE WHEN excluded.bodyPreview <> '' THEN excluded.bodyPreview ELSE emails.bodyPreview END,
+      bodyContentType    = CASE WHEN excluded.bodyContentType <> '' THEN excluded.bodyContentType ELSE emails.bodyContentType END,
+      bodyContent        = CASE WHEN excluded.bodyContent <> '' THEN excluded.bodyContent ELSE emails.bodyContent END,
+      receivedDateTime   = excluded.receivedDateTime,
+      isRead             = excluded.isRead,
+      isStarred          = excluded.isStarred,
+      fromName           = excluded.fromName,
+      fromAddress        = excluded.fromAddress,
+      toRecipients       = excluded.toRecipients,
+      ccRecipients       = excluded.ccRecipients
+  `).run(
+    msg.id, accountId, folderId, subject, snippet,
+    body.content ? body.contentType : "",
+    body.content,
+    receivedDateTime, isRead, isStarred, fromName, fromAddress, toRecipients, ccRecipients,
+  );
+}
+
+async function gmailFetchMessagesForLabel(
+  accessToken: string,
+  accountId: string,
+  labelId: string,
+  maxMessages: number,
+) {
+  const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+  listUrl.searchParams.set("labelIds", labelId);
+  listUrl.searchParams.set("maxResults", String(maxMessages));
+
+  const listResponse = await fetch(listUrl.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!listResponse.ok) {
+    const err = await listResponse.text();
+    throw new Error(`Gmail messages list failed (${listResponse.status}): ${err}`);
+  }
+
+  const listData = (await listResponse.json()) as GmailMessageListResponse;
+  const messageIds = (listData.messages ?? []).map((m) => m.id);
+
+  for (const messageId of messageIds) {
+    const msgUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`;
+    const msgResponse = await fetch(msgUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!msgResponse.ok) {
+      console.warn(`Gmail fetch message ${messageId} failed (${msgResponse.status})`);
+      continue;
+    }
+
+    const msg = (await msgResponse.json()) as GmailMessage;
+    gmailUpsertMessage(accountId, labelId, msg);
+    await sleep(30);
   }
 }
 
@@ -3755,6 +4085,384 @@ ipcMain.handle("microsoft-account:delete", async (_event, payload) => {
 });
 
 // =============================================================================
+// IPC HANDLERS — GOOGLE OAUTH
+// =============================================================================
+
+ipcMain.handle("google-oauth:connect", async () => {
+  const redirect = new URL(GOOGLE_REDIRECT_URI);
+
+  const verifier = toBase64Url(crypto.randomBytes(64));
+  const challenge = toBase64Url(crypto.createHash("sha256").update(verifier).digest());
+  const state = toBase64Url(crypto.randomBytes(32));
+
+  const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  authUrl.search = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    response_type: "code",
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    scope: GOOGLE_SCOPE,
+    access_type: "offline",
+    prompt: "consent select_account",
+    code_challenge_method: "S256",
+    code_challenge: challenge,
+    state,
+  }).toString();
+
+  const authCode = await new Promise<string>((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      if (!req.url) return;
+
+      const expectedHost = `${redirect.hostname}:${redirect.port}`;
+      if (req.headers.host !== expectedHost) {
+        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Bad request.");
+        return;
+      }
+
+      const requestUrl = new URL(req.url, GOOGLE_REDIRECT_URI);
+
+      if (requestUrl.pathname !== redirect.pathname) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Not found.");
+        return;
+      }
+
+      const receivedState = requestUrl.searchParams.get("state");
+      const code = requestUrl.searchParams.get("code");
+      const error = requestUrl.searchParams.get("error");
+      const errorDescription = requestUrl.searchParams.get("error_description");
+
+      if (error) {
+        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Google sign-in failed. You can close this window.");
+        server.close(() => reject(new Error(errorDescription || error)));
+        return;
+      }
+
+      if (receivedState !== state || !code) {
+        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Invalid sign-in response. You can close this window.");
+        server.close(() => reject(new Error("Invalid OAuth state or authorization code")));
+        return;
+      }
+
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Your Google account is now connected. You can close this window.");
+      server.close(() => resolve(code));
+    });
+
+    server.once("error", (error) => reject(error));
+
+    const timeoutId = setTimeout(() => {
+      server.close(() => reject(new Error("Timed out waiting for Google sign-in callback")));
+    }, oauthTimeoutMs);
+
+    server.on("close", () => clearTimeout(timeoutId));
+
+    server.listen(Number(redirect.port), redirect.hostname, () => {
+      shell.openExternal(authUrl.toString()).catch((error) => {
+        server.close(() => reject(error));
+      });
+    });
+  });
+
+  // Exchange auth code for tokens
+  const tokenParams = buildGoogleAuthorizationCodeParams({
+    clientId: GOOGLE_CLIENT_ID,
+    code: authCode,
+    redirectUri: GOOGLE_REDIRECT_URI,
+    codeVerifier: verifier,
+  });
+
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: tokenParams.toString(),
+  });
+
+  if (!tokenResponse.ok) {
+    const errorText = await tokenResponse.text();
+    throw new Error(
+      formatGoogleTokenExchangeError(tokenResponse.status, errorText),
+    );
+  }
+
+  const tokenPayload = (await tokenResponse.json()) as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in: number;
+    scope: string;
+    token_type: string;
+  };
+
+  // Fetch user profile
+  const profileResponse = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+    headers: { Authorization: `Bearer ${tokenPayload.access_token}` },
+  });
+
+  if (!profileResponse.ok) {
+    const errorText = await profileResponse.text();
+    throw new Error(`Google profile request failed (${profileResponse.status}): ${errorText}`);
+  }
+
+  const profile = (await profileResponse.json()) as {
+    id: string;
+    name?: string;
+    email?: string;
+  };
+
+  if (!profile.email) throw new Error("Google profile did not include an email address");
+
+  const accountId = `google-${profile.id}`;
+
+  const tokens = loadGoogleTokens();
+  tokens[accountId] = {
+    accountId,
+    provider: "google",
+    accessToken: tokenPayload.access_token,
+    refreshToken: tokenPayload.refresh_token,
+    expiresAt: Date.now() + tokenPayload.expires_in * 1000,
+    scope: tokenPayload.scope,
+    tokenType: tokenPayload.token_type,
+    clientId: GOOGLE_CLIENT_ID,
+    oauthScope: GOOGLE_SCOPE,
+  };
+  saveGoogleTokens(tokens);
+
+  // Pre-create Gmail system folders in the DB
+  gmailUpsertFolders(accountId);
+
+  return {
+    account: {
+      id: accountId,
+      name: profile.name || profile.email,
+      email: profile.email,
+      provider: "google",
+      externalId: profile.id,
+    },
+  };
+});
+
+// =============================================================================
+// IPC HANDLERS — GOOGLE ACCOUNT MANAGEMENT
+// =============================================================================
+
+ipcMain.handle("google-account:delete", async (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+
+  db.prepare("DELETE FROM emails WHERE accountId = ?").run(accountId);
+  db.prepare("DELETE FROM folders WHERE accountId = ?").run(accountId);
+
+  const tokens = loadGoogleTokens();
+  if (tokens[accountId]) {
+    delete tokens[accountId];
+    saveGoogleTokens(tokens);
+  }
+
+  return { success: true };
+});
+
+// =============================================================================
+// IPC HANDLERS — GMAIL MAIL
+// =============================================================================
+
+ipcMain.handle("gmail:sync", async (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+  const accessToken = await getValidGoogleAccessToken(accountId);
+
+  gmailUpsertFolders(accountId);
+
+  const labelLimits: Array<{ labelId: string; max: number }> = [
+    { labelId: "INBOX",   max: 50 },
+    { labelId: "SENT",    max: 25 },
+    { labelId: "DRAFT",   max: 10 },
+    { labelId: "STARRED", max: 10 },
+    { labelId: "TRASH",   max: 10 },
+  ];
+
+  for (const { labelId, max } of labelLimits) {
+    await gmailFetchMessagesForLabel(accessToken, accountId, labelId, max);
+  }
+
+  return { messagesByFolder: getLocalMessagesByFolder(accountId) };
+});
+
+ipcMain.handle("gmail:get-body", async (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+  const messageId = assertString(payload?.messageId, "messageId", 2048);
+
+  const accessToken = await getValidGoogleAccessToken(accountId);
+
+  const response = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Gmail get message failed (${response.status}): ${err}`);
+  }
+
+  const msg = (await response.json()) as GmailMessage;
+  const folderId = (msg.labelIds ?? []).find((l) =>
+    GMAIL_SYSTEM_FOLDERS.some((f) => f.id === l),
+  ) ?? "INBOX";
+
+  gmailUpsertMessage(accountId, folderId, msg);
+
+  const body = gmailExtractBody(msg.payload as GmailMessagePart | undefined);
+  return { content: body.content, contentType: body.contentType };
+});
+
+ipcMain.handle("gmail:send", async (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+  const to      = assertString(payload?.to, "to", 4096);
+  const cc      = optionalString(payload?.cc, "cc", 4096);
+  const subject = optionalString(payload?.subject, "subject", 512);
+  const body    = optionalString(payload?.body, "body", 500_000);
+
+  const accessToken = await getValidGoogleAccessToken(accountId);
+
+  const tokens = loadGoogleTokens();
+  const token  = tokens[accountId];
+  if (!token) throw new Error("No Google token stored for this account");
+
+  const lines: string[] = [
+    `To: ${to}`,
+    ...(cc ? [`Cc: ${cc}`] : []),
+    `Subject: ${subject || "(No subject)"}`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/html; charset=utf-8",
+    "",
+    sanitizeOutgoingHtml(body || " "),
+  ];
+
+  const raw = Buffer.from(lines.join("\r\n")).toString("base64url");
+
+  const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ raw }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Gmail send failed (${response.status}): ${err}`);
+  }
+
+  return { success: true };
+});
+
+ipcMain.handle("gmail:mark-read", async (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+  const messageId = assertString(payload?.messageId, "messageId", 2048);
+  const accessToken = await getValidGoogleAccessToken(accountId);
+
+  const response = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/modify`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
+    },
+  );
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Gmail mark-read failed (${response.status}): ${err}`);
+  }
+
+  db.prepare("UPDATE emails SET isRead = 1 WHERE id = ? AND accountId = ?").run(messageId, accountId);
+  return { success: true };
+});
+
+ipcMain.handle("gmail:mark-unread", async (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+  const messageId = assertString(payload?.messageId, "messageId", 2048);
+  const accessToken = await getValidGoogleAccessToken(accountId);
+
+  const response = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/modify`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ addLabelIds: ["UNREAD"] }),
+    },
+  );
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Gmail mark-unread failed (${response.status}): ${err}`);
+  }
+
+  db.prepare("UPDATE emails SET isRead = 0 WHERE id = ? AND accountId = ?").run(messageId, accountId);
+  return { success: true };
+});
+
+ipcMain.handle("gmail:toggle-star", async (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+  const messageId = assertString(payload?.messageId, "messageId", 2048);
+  const isStarred = Boolean(payload?.isStarred);
+  const accessToken = await getValidGoogleAccessToken(accountId);
+
+  const response = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/modify`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(
+        isStarred
+          ? { addLabelIds: ["STARRED"] }
+          : { removeLabelIds: ["STARRED"] },
+      ),
+    },
+  );
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Gmail toggle-star failed (${response.status}): ${err}`);
+  }
+
+  db.prepare("UPDATE emails SET isStarred = ? WHERE id = ? AND accountId = ?").run(
+    isStarred ? 1 : 0, messageId, accountId,
+  );
+  return { success: true };
+});
+
+ipcMain.handle("gmail:move", async (_event, payload) => {
+  const accountId    = validateAccountId(payload?.accountId);
+  const messageId    = assertString(payload?.messageId, "messageId", 2048);
+  const destination  = assertString(payload?.destination, "destination", 64).toUpperCase();
+
+  const validDestinations = new Set(["INBOX", "TRASH", "SPAM", "DRAFT"]);
+  if (!validDestinations.has(destination)) throw new Error("Invalid Gmail destination label");
+
+  const accessToken = await getValidGoogleAccessToken(accountId);
+
+  const response = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/modify`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ addLabelIds: [destination], removeLabelIds: ["INBOX", "TRASH", "SPAM"] }),
+    },
+  );
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Gmail move failed (${response.status}): ${err}`);
+  }
+
+  db.prepare("UPDATE emails SET folder = ? WHERE id = ? AND accountId = ?").run(
+    destination, messageId, accountId,
+  );
+  return { success: true };
+});
+
+// =============================================================================
 // IPC HANDLERS — MICROSOFT MAIL
 // =============================================================================
 
@@ -4611,4 +5319,4 @@ async function updateMessage(
 
   throw new Error("Microsoft Graph message update failed after retries");
 }
-import { resolveMarkReadValue } from "./mailReadState";
+

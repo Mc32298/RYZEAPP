@@ -53,6 +53,7 @@ import {
 } from "./emailPreferences";
 import { toast } from "sonner";
 import { UpdaterTopBarButton } from "@/components/AutoUpdater";
+import { formatGoogleConnectError } from "./googleAuthErrors";
 
 const SETTINGS_STORAGE_KEY = "email-client-settings";
 const ACCOUNTS_STORAGE_KEY = "email-client-accounts";
@@ -97,7 +98,9 @@ function loadStoredAccounts(): Account[] {
 
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((account) => account?.provider === "microsoft");
+    return parsed.filter(
+      (account) => account?.provider === "microsoft" || account?.provider === "google",
+    );
   } catch {
     return [];
   }
@@ -424,6 +427,8 @@ export function EmailClient() {
   const [connectMicrosoftError, setConnectMicrosoftError] = useState<
     string | null
   >(null);
+  const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
+  const [connectGoogleError, setConnectGoogleError] = useState<string | null>(null);
   const [mailSyncError, setMailSyncError] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [mailFolders, setMailFolders] = useState<MailFolder[]>([]);
@@ -449,7 +454,7 @@ export function EmailClient() {
   // Watch for account connection to auto-advance tutorial
   useEffect(() => {
     if (tutorialStep === 2 && !isSettingsOpen) {
-      if (accounts.some((a) => a.provider === "microsoft")) {
+      if (accounts.some((a) => a.provider === "microsoft" || a.provider === "google")) {
         const timer = setTimeout(() => setTutorialStep(3), 400);
         return () => clearTimeout(timer);
       }
@@ -718,15 +723,16 @@ export function EmailClient() {
         if (isCancelled) return;
 
         const msAccounts = accounts.filter((a) => a.provider === "microsoft");
-        const accountsToSync = msAccounts.filter(
+        const googleAccounts = accounts.filter((a) => a.provider === "google");
+        const msAccountsToSync = msAccounts.filter(
+          (a) => !initialSyncedAccountIds.includes(a.id),
+        );
+        const googleAccountsToSync = googleAccounts.filter(
           (a) => !initialSyncedAccountIds.includes(a.id),
         );
 
-        if (
-          window.electronAPI?.syncMicrosoftEmails &&
-          accountsToSync.length > 0
-        ) {
-          for (const account of accountsToSync) {
+        if (window.electronAPI?.syncMicrosoftEmails && msAccountsToSync.length > 0) {
+          for (const account of msAccountsToSync) {
             try {
               await window.electronAPI.syncMicrosoftEmails(account.id);
               if (isCancelled) return;
@@ -734,16 +740,28 @@ export function EmailClient() {
               console.error(`Initial sync failed for ${account.email}`, error);
             }
           }
+        }
 
-          if (!isCancelled) {
-            setInitialSyncedAccountIds((prev) => {
-              const newIds = accountsToSync
-                .map((a) => a.id)
-                .filter((id) => !prev.includes(id));
-              return [...prev, ...newIds];
-            });
-            await silentlyRefreshMailboxUI();
+        if (window.electronAPI?.syncGmailEmails && googleAccountsToSync.length > 0) {
+          for (const account of googleAccountsToSync) {
+            try {
+              await window.electronAPI.syncGmailEmails(account.id);
+              if (isCancelled) return;
+            } catch (error) {
+              console.error(`Initial Gmail sync failed for ${account.email}`, error);
+            }
           }
+        }
+
+        const allSyncedAccounts = [...msAccountsToSync, ...googleAccountsToSync];
+        if (!isCancelled && allSyncedAccounts.length > 0) {
+          setInitialSyncedAccountIds((prev) => {
+            const newIds = allSyncedAccounts
+              .map((a) => a.id)
+              .filter((id) => !prev.includes(id));
+            return [...prev, ...newIds];
+          });
+          await silentlyRefreshMailboxUI();
         }
       } catch (error) {
         if (isCancelled) return;
@@ -800,15 +818,23 @@ export function EmailClient() {
 
     const fullInterval = setInterval(async () => {
       if (isSyncing) return;
-      if (!window.electronAPI?.syncMicrosoftEmails) return;
-
       try {
         isSyncing = true;
         const msAccounts = accounts.filter((a) => a.provider === "microsoft");
+        const googleAccounts = accounts.filter((a) => a.provider === "google");
 
-        for (const account of msAccounts) {
-          if (isCancelled) break;
-          await window.electronAPI.syncMicrosoftEmails(account.id);
+        if (window.electronAPI?.syncMicrosoftEmails) {
+          for (const account of msAccounts) {
+            if (isCancelled) break;
+            await window.electronAPI.syncMicrosoftEmails(account.id);
+          }
+        }
+
+        if (window.electronAPI?.syncGmailEmails) {
+          for (const account of googleAccounts) {
+            if (isCancelled) break;
+            await window.electronAPI.syncGmailEmails(account.id);
+          }
         }
 
         if (!isCancelled) {
@@ -999,8 +1025,14 @@ export function EmailClient() {
               "Delete account is only available in the Electron desktop app.",
             );
           }
-
           await window.electronAPI.deleteMicrosoftAccount(accountId);
+        } else if (accountToDelete.provider === "google") {
+          if (!window.electronAPI?.deleteGoogleAccount) {
+            throw new Error(
+              "Delete account is only available in the Electron desktop app.",
+            );
+          }
+          await window.electronAPI.deleteGoogleAccount(accountId);
         }
 
         const nextAccounts = accounts.filter(
@@ -1132,6 +1164,50 @@ export function EmailClient() {
     }
   }, [accounts]);
 
+  const handleConnectGoogle = useCallback(async () => {
+    setConnectGoogleError(null);
+
+    if (!window.electronAPI?.connectGoogleAccount) {
+      setConnectGoogleError("Gmail OAuth is available only in the Electron desktop app.");
+      return;
+    }
+
+    setIsConnectingGoogle(true);
+    try {
+      const result = await window.electronAPI.connectGoogleAccount();
+      const connected = result.account;
+      const existing = accounts.find(
+        (account) =>
+          account.id === connected.id ||
+          account.email.toLowerCase() === connected.email.toLowerCase(),
+      );
+      const accountId = existing?.id ?? connected.id;
+
+      const nextAccount: Account = {
+        id: accountId,
+        name: connected.name,
+        email: connected.email,
+        initials: getInitials(connected.name),
+        color: existing?.color ?? selectProfileColor(connected.email),
+        provider: "google",
+        externalId: connected.externalId,
+      };
+
+      setAccounts((prev) => {
+        const prevExisting = prev.find((account) => account.id === accountId);
+        if (prevExisting) {
+          return prev.map((account) => (account.id === accountId ? nextAccount : account));
+        }
+        return [...prev, nextAccount];
+      });
+      setCurrentAccountId(accountId);
+    } catch (error) {
+      setConnectGoogleError(formatGoogleConnectError(error));
+    } finally {
+      setIsConnectingGoogle(false);
+    }
+  }, [accounts]);
+
   const handleSelectEmail = useCallback(
     async (email: EmailThread) => {
       setSelectedEmailId(email.id);
@@ -1153,12 +1229,20 @@ export function EmailClient() {
         ),
       );
 
-      if (!email.isRead && window.electronAPI?.markMicrosoftEmailAsRead) {
-        window.electronAPI
-          .markMicrosoftEmailAsRead(owningAccountId, realMessageId)
-          .catch((error) => {
-            console.error("Failed to mark email as read on server:", error);
-          });
+      const owningAccount = accounts.find((a) => a.id === owningAccountId);
+      const owningProvider = owningAccount?.provider ?? "microsoft";
+
+      if (!email.isRead) {
+        if (owningProvider === "google") {
+          window.electronAPI?.markGmailEmailAsRead?.(owningAccountId, realMessageId)
+            .catch((error) => console.error("Failed to mark Gmail email as read:", error));
+        } else if (window.electronAPI?.markMicrosoftEmailAsRead) {
+          window.electronAPI
+            .markMicrosoftEmailAsRead(owningAccountId, realMessageId)
+            .catch((error) => {
+              console.error("Failed to mark email as read on server:", error);
+            });
+        }
       }
 
       const shouldFetchBodyOrAttachments =
@@ -1168,13 +1252,20 @@ export function EmailClient() {
 
       if (shouldFetchBodyOrAttachments) {
         try {
-          const bodyData = (await window.electronAPI?.getMicrosoftEmailBody(
+          const getBodyFn =
+            owningProvider === "google"
+              ? window.electronAPI?.getGmailEmailBody
+              : window.electronAPI?.getMicrosoftEmailBody;
+
+          const bodyData = (await getBodyFn?.(
             owningAccountId,
             realMessageId,
           )) as any;
 
-          const rawContent = bodyData?.body?.content || "";
-          const isHtml = bodyData?.body?.contentType?.toLowerCase() === "html";
+          // Microsoft returns { body: { content, contentType } }; Gmail returns { content, contentType }
+          const rawContent = bodyData?.body?.content || bodyData?.content || "";
+          const rawContentType = bodyData?.body?.contentType || bodyData?.contentType || "";
+          const isHtml = rawContentType.toLowerCase() === "html";
 
           // CRITICAL SECURITY FIX: Sanitize all incoming email bodies
           const sanitizedContent = DOMPurify.sanitize(
@@ -1234,7 +1325,7 @@ export function EmailClient() {
         }
       }
     },
-    [currentAccountId],
+    [currentAccountId, accounts],
   );
 
   const handleToggleStar = useCallback(
@@ -1250,19 +1341,22 @@ export function EmailClient() {
         ),
       );
 
-      if (window.electronAPI?.toggleMicrosoftEmailStar) {
+      const starAccountId = emailToUpdate.accountId || currentAccountId;
+      const starAccount = accounts.find((a) => a.id === starAccountId);
+
+      if (starAccount?.provider === "google") {
+        window.electronAPI?.toggleGmailEmailStar?.(
+          starAccountId,
+          emailToUpdate.messageId,
+          newStarredState,
+        ).catch((error) => console.error("Failed to toggle Gmail star:", error));
+      } else if (window.electronAPI?.toggleMicrosoftEmailStar) {
         window.electronAPI
-          .toggleMicrosoftEmailStar(
-            emailToUpdate.accountId || currentAccountId,
-            emailToUpdate.messageId,
-            newStarredState,
-          )
-          .catch((error) => {
-            console.error("Failed to toggle star on server:", error);
-          });
+          .toggleMicrosoftEmailStar(starAccountId, emailToUpdate.messageId, newStarredState)
+          .catch((error) => console.error("Failed to toggle star on server:", error));
       }
     },
-    [emails, currentAccountId],
+    [emails, currentAccountId, accounts],
   );
 
   const handleDownloadAttachment = useCallback(
@@ -1310,18 +1404,19 @@ export function EmailClient() {
 
       if (selectedEmailId === id) setSelectedEmailId(null);
 
-      if (window.electronAPI?.markMicrosoftEmailAsUnread) {
+      const unreadAccountId = emailToUpdate.accountId || currentAccountId;
+      const unreadAccount = accounts.find((a) => a.id === unreadAccountId);
+
+      if (unreadAccount?.provider === "google") {
+        window.electronAPI?.markGmailEmailAsUnread?.(unreadAccountId, emailToUpdate.messageId)
+          .catch((error) => console.error("Failed to mark Gmail email as unread:", error));
+      } else if (window.electronAPI?.markMicrosoftEmailAsUnread) {
         window.electronAPI
-          .markMicrosoftEmailAsUnread(
-            emailToUpdate.accountId || currentAccountId,
-            emailToUpdate.messageId,
-          )
-          .catch((error) => {
-            console.error("Failed to mark unread on server:", error);
-          });
+          .markMicrosoftEmailAsUnread(unreadAccountId, emailToUpdate.messageId)
+          .catch((error) => console.error("Failed to mark unread on server:", error));
       }
     },
-    [selectedEmailId, emails, currentAccountId],
+    [selectedEmailId, emails, currentAccountId, accounts],
   );
 
   const handleSnooze = useCallback(
@@ -1742,34 +1837,43 @@ export function EmailClient() {
       const draft = drafts.find((d) => d.id === id);
       if (!draft) return;
 
-      if (window.electronAPI?.sendMicrosoftEmail) {
+      const sendPayload = {
+        accountId: currentAccountId,
+        to: draft.to,
+        cc: draft.cc,
+        subject: draft.subject,
+        body: draft.body,
+      };
+
+      const isGoogleAccount = currentAccount.provider === "google";
+      const sendFn = isGoogleAccount
+        ? window.electronAPI?.sendGmailEmail
+        : window.electronAPI?.sendMicrosoftEmail;
+
+      if (sendFn) {
         try {
           setDrafts((prev) => prev.filter((d) => d.id !== id));
 
           try {
-            await window.electronAPI.sendMicrosoftEmail({
-              accountId: currentAccountId,
-              to: draft.to,
-              cc: draft.cc,
-              subject: draft.subject,
-              body: draft.body,
-            });
+            await sendFn(sendPayload);
           } catch (error) {
             console.error("Failed to send email:", error);
             setDrafts((prev) => [...prev, draft]);
             alert("Failed to send email. The draft was restored.");
           }
 
-          window.electronAPI
-            .syncMicrosoftInbox?.(currentAccountId)
-            .catch(console.error);
+          if (!isGoogleAccount) {
+            window.electronAPI
+              ?.syncMicrosoftInbox?.(currentAccountId)
+              .catch(console.error);
+          }
         } catch (error) {
           console.error("Failed to send email:", error);
           alert("Failed to send email. Check console for details.");
         }
       }
     },
-    [drafts, currentAccountId],
+    [drafts, currentAccountId, currentAccount],
   );
 
   const handleInlineReplySend = useCallback(
@@ -2419,9 +2523,12 @@ export function EmailClient() {
         onAccountChange={handleAccountChange}
         onSettingsChange={handleSettingsChange}
         onConnectMicrosoft={handleConnectMicrosoft}
+        onConnectGoogle={handleConnectGoogle}
         onDeleteAccount={handleDeleteAccount}
         isConnectingMicrosoft={isConnectingMicrosoft}
         connectMicrosoftError={connectMicrosoftError ?? mailSyncError}
+        isConnectingGoogle={isConnectingGoogle}
+        connectGoogleError={connectGoogleError}
       />
 
       <div

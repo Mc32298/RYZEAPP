@@ -238,6 +238,52 @@ declare global {
         messageId: string;
         comment: string;
       }) => Promise<{ success: boolean }>;
+
+      connectGoogleAccount: () => Promise<{
+        account: Pick<
+          Account,
+          "id" | "name" | "email" | "provider" | "externalId"
+        >;
+      }>;
+
+      deleteGoogleAccount: (accountId: string) => Promise<{ success: boolean }>;
+
+      syncGmailEmails: (accountId: string) => Promise<any>;
+
+      getGmailEmailBody: (
+        accountId: string,
+        messageId: string,
+      ) => Promise<{ content: string; contentType: string }>;
+
+      sendGmailEmail: (payload: {
+        accountId: string;
+        to: string;
+        cc?: string;
+        subject?: string;
+        body?: string;
+      }) => Promise<{ success: boolean }>;
+
+      markGmailEmailAsRead: (
+        accountId: string,
+        messageId: string,
+      ) => Promise<{ success: boolean }>;
+
+      markGmailEmailAsUnread: (
+        accountId: string,
+        messageId: string,
+      ) => Promise<{ success: boolean }>;
+
+      toggleGmailEmailStar: (
+        accountId: string,
+        messageId: string,
+        isStarred: boolean,
+      ) => Promise<{ success: boolean }>;
+
+      moveGmailEmail: (
+        accountId: string,
+        messageId: string,
+        destination: string,
+      ) => Promise<{ success: boolean }>;
     };
   }
 }
