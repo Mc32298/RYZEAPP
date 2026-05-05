@@ -20,8 +20,11 @@ import * as fs from "fs";
 import http from "http"; // Used for the local OAuth callback server
 import { resolveMarkReadValue } from "./mailReadState";
 import { buildGraphReplyPayload } from "./mailReplyPayload";
+import { isValidAccountId } from "./accountId";
+import { buildGmailMoveLabelMutation } from "./gmailMove";
 import {
   buildGoogleAuthorizationCodeParams,
+  buildGoogleTokenExchangeDebugContext,
   buildGoogleRefreshTokenParams,
   formatGoogleTokenExchangeError,
 } from "./googleOAuth";
@@ -1084,12 +1087,12 @@ function optionalString(
 
 /**
  * Validates an accountId string.
- * Must follow the pattern: ms-<alphanumeric/dot/dash/underscore>
+ * Must follow the pattern: (ms|google)-<alphanumeric/dot/dash/underscore>
  */
 function validateAccountId(accountId: unknown): string {
   const value = assertString(accountId, "accountId", 256);
 
-  if (!/^ms-[A-Za-z0-9._-]+$/.test(value)) {
+  if (!isValidAccountId(value)) {
     throw new Error("Invalid accountId");
   }
 
@@ -1480,12 +1483,11 @@ function saveMicrosoftTokens(tokens: Record<string, MicrosoftStoredToken>) {
 // =============================================================================
 
 const GOOGLE_CLIENT_ID =
-  process.env.GOOGLE_OAUTH_CLIENT_ID?.trim() ||
-  "224714941754-rhbg9oqtj0vieilhj1p3fc4slai0ah09.apps.googleusercontent.com";
+  "224714941754-dmhs2n3lmljpgajk3qak2glsoqdtl6ea.apps.googleusercontent.com";
 
-const GOOGLE_REDIRECT_URI =
-  process.env.GOOGLE_OAUTH_REDIRECT_URI?.trim() ||
-  "http://127.0.0.1:42814/auth/google/callback";
+const GOOGLE_CLIENT_SECRET = "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";
+
+const GOOGLE_REDIRECT_URI = "http://localhost:53682";
 
 const GOOGLE_SCOPE =
   "openid email profile " +
@@ -1498,6 +1500,7 @@ const GMAIL_SYSTEM_FOLDERS = [
   { id: "INBOX",   displayName: "Inbox",   wellKnownName: "inbox",       depth: 0, path: "Inbox" },
   { id: "SENT",    displayName: "Sent",    wellKnownName: "sentitems",   depth: 0, path: "Sent" },
   { id: "DRAFT",   displayName: "Drafts",  wellKnownName: "drafts",      depth: 0, path: "Drafts" },
+  { id: "ARCHIVE", displayName: "Archive", wellKnownName: "archive",     depth: 0, path: "Archive" },
   { id: "TRASH",   displayName: "Trash",   wellKnownName: "deleteditems",depth: 0, path: "Trash" },
   { id: "STARRED", displayName: "Starred", wellKnownName: "",            depth: 0, path: "Starred" },
   { id: "SPAM",    displayName: "Spam",    wellKnownName: "junkmail",    depth: 0, path: "Spam" },
@@ -1560,6 +1563,7 @@ async function getValidGoogleAccessToken(accountId: string): Promise<string> {
       const clientId = token.clientId || GOOGLE_CLIENT_ID;
       const params = buildGoogleRefreshTokenParams({
         clientId,
+        clientSecret: GOOGLE_CLIENT_SECRET,
         refreshToken: token.refreshToken!,
       });
 
@@ -4169,6 +4173,7 @@ ipcMain.handle("google-oauth:connect", async () => {
   // Exchange auth code for tokens
   const tokenParams = buildGoogleAuthorizationCodeParams({
     clientId: GOOGLE_CLIENT_ID,
+    clientSecret: GOOGLE_CLIENT_SECRET,
     code: authCode,
     redirectUri: GOOGLE_REDIRECT_URI,
     codeVerifier: verifier,
@@ -4182,8 +4187,21 @@ ipcMain.handle("google-oauth:connect", async () => {
 
   if (!tokenResponse.ok) {
     const errorText = await tokenResponse.text();
+    const debugContext = buildGoogleTokenExchangeDebugContext({
+      clientId: GOOGLE_CLIENT_ID,
+      redirectUri: GOOGLE_REDIRECT_URI,
+    });
+    console.error("[google-oauth] token exchange failed", {
+      status: tokenResponse.status,
+      errorText,
+      ...debugContext,
+    });
     throw new Error(
-      formatGoogleTokenExchangeError(tokenResponse.status, errorText),
+      formatGoogleTokenExchangeError(
+        tokenResponse.status,
+        errorText,
+        debugContext,
+      ),
     );
   }
 
@@ -4437,17 +4455,19 @@ ipcMain.handle("gmail:move", async (_event, payload) => {
   const messageId    = assertString(payload?.messageId, "messageId", 2048);
   const destination  = assertString(payload?.destination, "destination", 64).toUpperCase();
 
-  const validDestinations = new Set(["INBOX", "TRASH", "SPAM", "DRAFT"]);
+  const validDestinations = new Set(["INBOX", "TRASH", "SPAM", "DRAFT", "ARCHIVE"]);
   if (!validDestinations.has(destination)) throw new Error("Invalid Gmail destination label");
 
   const accessToken = await getValidGoogleAccessToken(accountId);
+  const { addLabelIds, removeLabelIds } =
+    buildGmailMoveLabelMutation(destination);
 
   const response = await fetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/modify`,
     {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ addLabelIds: [destination], removeLabelIds: ["INBOX", "TRASH", "SPAM"] }),
+      body: JSON.stringify({ addLabelIds, removeLabelIds }),
     },
   );
 

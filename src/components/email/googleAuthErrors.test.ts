@@ -17,6 +17,14 @@ describe("formatGoogleConnectError", () => {
     ).toContain("policy_enforced");
   });
 
+  it("explains client_secret failures as a bundled client type mismatch", () => {
+    expect(
+      formatGoogleConnectError(
+        new Error('Google token exchange failed (400): {"error":"invalid_request","error_description":"client_secret is missing."}'),
+      ),
+    ).toContain("bundled Google client");
+  });
+
   it("preserves unrelated Google sign-in failures", () => {
     expect(formatGoogleConnectError(new Error("socket hang up"))).toBe(
       "socket hang up",

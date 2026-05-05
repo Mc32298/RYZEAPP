@@ -53,6 +53,7 @@ interface ReadingPaneProps {
   onDelete: (id: string) => void;
   showAvatars: boolean;
   currentUserEmail: string;
+  currentUserLabel: string;
   blockRemoteImages: boolean;
   confirmExternalLinks: boolean;
   labels: EmailLabel[];
@@ -356,6 +357,7 @@ export function ReadingPane({
   onDelete,
   showAvatars,
   currentUserEmail,
+  currentUserLabel,
   blockRemoteImages,
   confirmExternalLinks,
   onDownloadAttachment,
@@ -828,7 +830,7 @@ export function ReadingPane({
               </div>
             )}
 
-            <div className="space-y-0">
+            <div className="space-y-3">
               {timelineMessages.map((message) => {
                 let renderedBody = sanitizeEmailHtml(
                   message.body || "",
@@ -863,6 +865,8 @@ export function ReadingPane({
                 const trimmed = stripQuotedHtml(renderedBody);
                 const isExpanded = expandedMessageIds.includes(message.id);
                 const isActive = activeMessageId === message.id;
+                const isLatest =
+                  message.id === timelineMessages[timelineMessages.length - 1]?.id;
 
                 return (
                   <ConversationMessageCard
@@ -870,6 +874,7 @@ export function ReadingPane({
                     email={message}
                     isExpanded={isExpanded}
                     isActive={isActive}
+                    isLatest={isLatest}
                     showAvatars={showAvatars}
                     currentUserEmail={currentUserEmail}
                     visibleHtml={trimmed.visibleHtml}
@@ -895,15 +900,22 @@ export function ReadingPane({
                 );
               })}
               <div
-                className="mt-8 rounded-[var(--radius-ryze-lg)] border border-[var(--border-1)] bg-[var(--bg-1)] p-4"
+                className="mt-6 rounded-[var(--radius-ryze-lg)] border border-[var(--border-1)] bg-[var(--bg-1)] p-4 shadow-[0_16px_38px_-28px_oklch(0_0_0_/_0.7)]"
               >
-                <div className="mb-4 flex items-center gap-2 font-mono-jetbrains text-[10px] uppercase tracking-[0.08em] text-[var(--fg-2)]">
-                  <Reply size={12} />
-                  Reply to{" "}
-                  {getConversationSenderName(
-                    inlineReplyTargetMessage,
-                    currentUserEmail,
-                  )}
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2 font-mono-jetbrains text-[10px] uppercase tracking-[0.08em] text-[var(--fg-2)]">
+                    <Reply size={12} />
+                    <span className="truncate">
+                      Reply to{" "}
+                      {getConversationSenderName(
+                        inlineReplyTargetMessage,
+                        currentUserEmail,
+                      )}
+                    </span>
+                  </div>
+                  <span className="shrink-0 rounded-full border border-[var(--border-0)] px-2.5 py-1 font-mono-jetbrains text-[10px] uppercase tracking-[0.08em] text-[var(--fg-2)]">
+                    From {currentUserLabel}
+                  </span>
                 </div>
                 <textarea
                   value={inlineReplyBody}
@@ -911,7 +923,7 @@ export function ReadingPane({
                     setInlineReplyBody(event.target.value);
                     setInlineReplyError("");
                   }}
-                  className="h-24 w-full resize-none bg-transparent text-[14px] leading-relaxed text-[var(--fg-0)] outline-none placeholder:text-[var(--fg-3)]"
+                  className="h-24 w-full resize-none rounded-[var(--radius-ryze-md)] border border-[var(--border-0)] bg-[var(--bg-0)] px-3 py-3 text-[14px] leading-relaxed text-[var(--fg-0)] outline-none transition-colors placeholder:text-[var(--fg-3)] focus:border-[var(--ryze-accent)]"
                   placeholder="Type a reply..."
                   onFocus={() => setActiveMessageId(activeMessage.id)}
                 />

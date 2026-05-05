@@ -14,6 +14,17 @@ function looksLikeEmailAddress(value: string) {
   return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value.trim());
 }
 
+function isSentFolder(email: EmailThread) {
+  const normalizedFolder = normalizeValue(email.folder);
+  const normalizedFolderLabel = normalizeValue(email.folderLabel);
+
+  return (
+    normalizedFolder === "sent" ||
+    normalizedFolder === "sentitems" ||
+    normalizedFolderLabel === "sent"
+  );
+}
+
 function escapeHtml(value: string) {
   return value
     .replace(/&/g, "&amp;")
@@ -59,12 +70,7 @@ export function getConversationSenderName(
   const senderEmail = email.sender.email?.trim();
   const normalizedSenderEmail = normalizeValue(senderEmail);
   const normalizedCurrentUserEmail = normalizeValue(currentUserEmail);
-  const normalizedFolder = normalizeValue(email.folder);
-  const normalizedFolderLabel = normalizeValue(email.folderLabel);
-  const isSentMessage =
-    normalizedFolder === "sent" ||
-    normalizedFolder === "sentitems" ||
-    normalizedFolderLabel === "sent";
+  const isSentMessage = isSentFolder(email);
 
   if (
     normalizedSenderEmail &&
@@ -91,6 +97,33 @@ export function getConversationSenderName(
   }
 
   return senderName;
+}
+
+export function isConversationMessageFromCurrentUser(
+  email: EmailThread,
+  currentUserEmail: string,
+) {
+  const normalizedSenderEmail = normalizeValue(email.sender.email);
+  const normalizedCurrentUserEmail = normalizeValue(currentUserEmail);
+
+  if (
+    normalizedSenderEmail &&
+    normalizedCurrentUserEmail &&
+    normalizedSenderEmail === normalizedCurrentUserEmail
+  ) {
+    return true;
+  }
+
+  return isSentFolder(email) && looksOpaqueSenderName(email.sender.name || "");
+}
+
+export function getConversationMessageState(
+  email: EmailThread,
+  currentUserEmail: string,
+) {
+  return isConversationMessageFromCurrentUser(email, currentUserEmail)
+    ? "Sent"
+    : "Reply";
 }
 
 export function getConversationSenderEmail(email: EmailThread) {

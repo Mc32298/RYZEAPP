@@ -160,7 +160,11 @@ export function threadRowMatchesFilters(
 }
 
 export function getDefaultExpandedMessageIds(messages: EmailThread[]) {
-  return messages.slice(0, 2).map((item) => item.id);
+  const newest = [...messages].sort(
+    (left, right) => right.timestamp.getTime() - left.timestamp.getTime(),
+  )[0];
+
+  return newest ? [newest.id] : [];
 }
 
 export function getReadingTimelineMessages(messages: EmailThread[]) {
@@ -177,17 +181,26 @@ export function scrollReadingTimelineToBottom(
 }
 
 export function stripQuotedHtml(html: string): TrimmedMessageBody {
-  const blockquoteMatch = html.match(/<blockquote[\s\S]*<\/blockquote>/i);
+  const quotePatterns = [
+    /<blockquote\b[\s\S]*<\/blockquote>/i,
+    /<[^>]+(?:class|id)=["'][^"']*(?:gmail_quote|gmail_attr|yahoo_quoted|moz-cite-prefix|divRplyFwdMsg)[^"']*["'][\s\S]*$/i,
+  ];
 
-  if (!blockquoteMatch) {
-    return { visibleHtml: html, quotedHtml: "" };
+  for (const pattern of quotePatterns) {
+    const match = html.match(pattern);
+
+    if (!match || typeof match.index !== "number") {
+      continue;
+    }
+
+    const quotedHtml = html.slice(match.index).trim();
+    const visibleHtml = html.slice(0, match.index).trim();
+
+    return {
+      visibleHtml: visibleHtml || html,
+      quotedHtml,
+    };
   }
 
-  const quotedHtml = blockquoteMatch[0];
-  const visibleHtml = html.replace(quotedHtml, "").trim();
-
-  return {
-    visibleHtml: visibleHtml || html,
-    quotedHtml,
-  };
+  return { visibleHtml: html, quotedHtml: "" };
 }

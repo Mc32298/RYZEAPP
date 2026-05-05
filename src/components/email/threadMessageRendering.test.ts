@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { EmailAttachment, EmailThread } from "@/types/email";
 import {
   getConversationFolderLabel,
+  getConversationMessageState,
   getConversationSenderName,
+  isConversationMessageFromCurrentUser,
   renderThreadMessageHtml,
 } from "./threadMessageRendering";
 
@@ -84,6 +86,68 @@ describe("getConversationSenderName", () => {
 
     expect(getConversationSenderName(email, "mathias@spinop.com")).toBe(
       "Mathias Nielsen - SPINOP",
+    );
+  });
+});
+
+describe("isConversationMessageFromCurrentUser", () => {
+  it("uses the current account email to classify sent messages", () => {
+    expect(
+      isConversationMessageFromCurrentUser(
+        makeEmail({
+          sender: {
+            name: "Mathias",
+            email: "mathias@spinop.com",
+            initials: "M",
+            color: "#5F7A52",
+          },
+        }),
+        "mathias@spinop.com",
+      ),
+    ).toBe(true);
+  });
+
+  it("treats sent-folder messages with opaque sender names as sent by the user", () => {
+    expect(
+      isConversationMessageFromCurrentUser(
+        makeEmail({
+          folder: "sentitems",
+          folderLabel: "Sent",
+          sender: {
+            name: "AQMKA0G2ZW12NTDILTUWYWUTNGFMZC04NTCXLWQ1YTFL0DBMNVWYYGAUAAADZTPA3JY49UC8QIAJ_DSBUWEABBPPBLAEC6WY7A8JFCQCUWAAAGE",
+            email: "alias@spinop.com",
+            initials: "MN",
+            color: "#5F7A52",
+          },
+        }),
+        "mathias@spinop.com",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("getConversationMessageState", () => {
+  it("labels sent messages with a quiet sent state", () => {
+    expect(
+      getConversationMessageState(
+        makeEmail({
+          folder: "sent",
+          folderLabel: "Sent",
+          sender: {
+            name: "Mathias",
+            email: "mathias@spinop.com",
+            initials: "M",
+            color: "#5F7A52",
+          },
+        }),
+        "mathias@spinop.com",
+      ),
+    ).toBe("Sent");
+  });
+
+  it("labels received messages as replies", () => {
+    expect(getConversationMessageState(makeEmail(), "other@spinop.com")).toBe(
+      "Reply",
     );
   });
 });

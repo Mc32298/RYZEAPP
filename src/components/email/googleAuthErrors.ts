@@ -16,7 +16,7 @@ export function formatGoogleConnectError(error: unknown) {
   ) {
     return [
       "Google OAuth is misconfigured.",
-      "The current Google client is the wrong type for this Electron PKCE flow. Use a Google OAuth client of type Desktop app with the localhost redirect URI.",
+      "The bundled Google client is the wrong type for this Electron PKCE flow. Replace it with a Google OAuth client of type Desktop app that uses the app's localhost redirect URI.",
     ].join(" ");
   }
 

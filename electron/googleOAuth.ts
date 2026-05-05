@@ -1,5 +1,6 @@
 interface GoogleAuthorizationCodeParamsArgs {
   clientId: string;
+  clientSecret?: string;
   code: string;
   redirectUri: string;
   codeVerifier: string;
@@ -7,7 +8,13 @@ interface GoogleAuthorizationCodeParamsArgs {
 
 interface GoogleRefreshTokenParamsArgs {
   clientId: string;
+  clientSecret?: string;
   refreshToken: string;
+}
+
+interface GoogleTokenExchangeDebugContextArgs {
+  clientId: string;
+  redirectUri: string;
 }
 
 export function buildGoogleAuthorizationCodeParams(
@@ -21,6 +28,10 @@ export function buildGoogleAuthorizationCodeParams(
     code_verifier: args.codeVerifier,
   });
 
+  if (args.clientSecret?.trim()) {
+    params.set("client_secret", args.clientSecret.trim());
+  }
+
   return params;
 }
 
@@ -33,24 +44,71 @@ export function buildGoogleRefreshTokenParams(
     refresh_token: args.refreshToken,
   });
 
+  if (args.clientSecret?.trim()) {
+    params.set("client_secret", args.clientSecret.trim());
+  }
+
   return params;
+}
+
+export function buildGoogleTokenExchangeDebugContext(
+  args: GoogleTokenExchangeDebugContextArgs,
+) {
+  return {
+    clientIdSuffix: args.clientId.slice(-32),
+    redirectUri: args.redirectUri,
+    usesPkce: true,
+  };
 }
 
 export function formatGoogleTokenExchangeError(
   status: number,
   errorText: string,
+  debugContext?: {
+    clientIdSuffix: string;
+    redirectUri: string;
+    usesPkce: boolean;
+  },
 ) {
   const normalized = errorText.toLowerCase();
+  let parsedErrorDescription = "";
+
+  try {
+    const parsed = JSON.parse(errorText) as {
+      error?: string;
+      error_description?: string;
+    };
+    parsedErrorDescription = parsed.error_description?.trim() || "";
+  } catch {
+    parsedErrorDescription = "";
+  }
 
   if (
     normalized.includes("client_secret is missing") ||
-    normalized.includes('"error":"invalid_request"')
+    parsedErrorDescription.toLowerCase().includes("client_secret is missing")
   ) {
     return [
-      `Google token exchange failed (${status}): the configured Google OAuth client is not valid for a desktop PKCE flow.`,
-      "Use a Google OAuth client of type Desktop app with the loopback redirect URI for this Electron app.",
+      `Google token exchange failed (${status}): the bundled Google client ID is not valid for a desktop PKCE flow.`,
+      "Replace it with a Google OAuth client of type Desktop app that is configured for this Electron app's loopback redirect URI.",
+      debugContext
+        ? `Debug: clientIdSuffix=${debugContext.clientIdSuffix}, redirectUri=${debugContext.redirectUri}, usesPkce=${String(debugContext.usesPkce)}.`
+        : "",
     ].join(" ");
   }
 
-  return `Google token exchange failed (${status}): ${errorText}`;
+  if (parsedErrorDescription) {
+    return [
+      `Google token exchange failed (${status}): ${parsedErrorDescription}`,
+      debugContext
+        ? `Debug: clientIdSuffix=${debugContext.clientIdSuffix}, redirectUri=${debugContext.redirectUri}, usesPkce=${String(debugContext.usesPkce)}.`
+        : "",
+    ].join(" ");
+  }
+
+  return [
+    `Google token exchange failed (${status}): ${errorText}`,
+    debugContext
+      ? `Debug: clientIdSuffix=${debugContext.clientIdSuffix}, redirectUri=${debugContext.redirectUri}, usesPkce=${String(debugContext.usesPkce)}.`
+      : "",
+  ].join(" ");
 }

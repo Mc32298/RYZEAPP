@@ -12,10 +12,13 @@ import {
   Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { Account } from "@/types/email";
 import type { AiTone } from "./readingInsights";
 
 export interface ComposeDraft {
   id: string;
+  accountId: string;
+  provider?: Account["provider"];
   to: string;
   cc: string;
   subject: string;

@@ -120,14 +120,14 @@ describe("buildConversationThread", () => {
 });
 
 describe("getDefaultExpandedMessageIds", () => {
-  it("opens the newest two messages by default", () => {
+  it("opens only the newest message by default", () => {
     const messages = [
       makeEmail("msg-3", { timestamp: new Date("2026-05-03T10:00:00Z") }),
       makeEmail("msg-2", { timestamp: new Date("2026-05-02T10:00:00Z") }),
       makeEmail("msg-1", { timestamp: new Date("2026-05-01T10:00:00Z") }),
     ];
 
-    expect(getDefaultExpandedMessageIds(messages)).toEqual(["msg-3", "msg-2"]);
+    expect(getDefaultExpandedMessageIds(messages)).toEqual(["msg-3"]);
   });
 });
 
@@ -178,6 +178,37 @@ describe("stripQuotedHtml", () => {
       "Older quoted text",
     );
     expect(stripQuotedHtml(html).quotedHtml).toContain("Older quoted text");
+  });
+
+  it("removes Gmail quote containers from the visible message body", () => {
+    const html = `
+      <div>
+        <p>Latest reply</p>
+        <div class="gmail_quote"><p>Older Gmail quote</p></div>
+      </div>
+    `;
+
+    expect(stripQuotedHtml(html).visibleHtml).toContain("Latest reply");
+    expect(stripQuotedHtml(html).visibleHtml).not.toContain(
+      "Older Gmail quote",
+    );
+    expect(stripQuotedHtml(html).quotedHtml).toContain("Older Gmail quote");
+  });
+
+  it("treats Outlook reply headers as the start of quoted content", () => {
+    const html = `
+      <div>
+        <p>Latest reply</p>
+        <div id="divRplyFwdMsg">From: Taylor</div>
+        <p>Older Outlook quote</p>
+      </div>
+    `;
+
+    expect(stripQuotedHtml(html).visibleHtml).toContain("Latest reply");
+    expect(stripQuotedHtml(html).visibleHtml).not.toContain(
+      "Older Outlook quote",
+    );
+    expect(stripQuotedHtml(html).quotedHtml).toContain("From: Taylor");
   });
 });
 
