@@ -4077,7 +4077,11 @@ ipcMain.handle("microsoft-oauth:connect", async () => {
 ipcMain.handle("microsoft-account:delete", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
 
-  db.prepare("DELETE FROM emails WHERE accountId = ?").run(accountId);
+  db.transaction(() => {
+    db.prepare("DELETE FROM email_labels WHERE accountId = ?").run(accountId);
+    db.prepare("DELETE FROM emails WHERE accountId = ?").run(accountId);
+    db.prepare("DELETE FROM folders WHERE accountId = ?").run(accountId);
+  })();
 
   const tokens = loadMicrosoftTokens();
   if (tokens[accountId]) {
@@ -4268,8 +4272,11 @@ ipcMain.handle("google-oauth:connect", async () => {
 ipcMain.handle("google-account:delete", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
 
-  db.prepare("DELETE FROM emails WHERE accountId = ?").run(accountId);
-  db.prepare("DELETE FROM folders WHERE accountId = ?").run(accountId);
+  db.transaction(() => {
+    db.prepare("DELETE FROM email_labels WHERE accountId = ?").run(accountId);
+    db.prepare("DELETE FROM emails WHERE accountId = ?").run(accountId);
+    db.prepare("DELETE FROM folders WHERE accountId = ?").run(accountId);
+  })();
 
   const tokens = loadGoogleTokens();
   if (tokens[accountId]) {

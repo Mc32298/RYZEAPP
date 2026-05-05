@@ -27,7 +27,6 @@ import {
 import {
   getDefaultExpandedMessageIds,
   getReadingTimelineMessages,
-  scrollReadingTimelineToBottom,
   stripQuotedHtml,
 } from "./threadView";
 import {
@@ -393,6 +392,9 @@ export function ReadingPane({
   const [isInlineReplySending, setIsInlineReplySending] = useState(false);
   const [inlineReplyError, setInlineReplyError] = useState("");
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollRef = useRef(false);
 
   const senderEmail = normalizeEmailAddress(email?.sender.email || "");
   const isTrustedSender = senderEmail
@@ -437,16 +439,30 @@ export function ReadingPane({
   }, [email?.id, threadMessages]);
 
   useEffect(() => {
-    const firstFrame = window.requestAnimationFrame(() => {
-      scrollReadingTimelineToBottom(scrollContainerRef.current);
+    shouldAutoScrollRef.current = true;
 
-      window.requestAnimationFrame(() => {
-        scrollReadingTimelineToBottom(scrollContainerRef.current);
-      });
-    });
+    const scrollToBottom = () => {
+      if (shouldAutoScrollRef.current && bottomAnchorRef.current) {
+        bottomAnchorRef.current.scrollIntoView({ behavior: "instant" });
+      }
+    };
 
-    return () => window.cancelAnimationFrame(firstFrame);
-  }, [email?.id, timelineMessages.length]);
+    scrollToBottom();
+
+    const observer = new ResizeObserver(scrollToBottom);
+    if (messagesContainerRef.current) observer.observe(messagesContainerRef.current);
+
+    const timeout = setTimeout(() => {
+      shouldAutoScrollRef.current = false;
+      observer.disconnect();
+    }, 4000);
+
+    return () => {
+      clearTimeout(timeout);
+      observer.disconnect();
+      shouldAutoScrollRef.current = false;
+    };
+  }, [email?.id]);
 
   const handleInlineReplySend = async () => {
     const bodyText = inlineReplyBody.trim();
@@ -830,7 +846,7 @@ export function ReadingPane({
               </div>
             )}
 
-            <div className="space-y-3">
+            <div className="space-y-3" ref={messagesContainerRef}>
               {timelineMessages.map((message) => {
                 let renderedBody = sanitizeEmailHtml(
                   message.body || "",
@@ -966,6 +982,7 @@ export function ReadingPane({
                 </div>
               </div>
             </div>
+            <div ref={bottomAnchorRef} />
           </div>
 
           {activeMessage && derivedInsights && (

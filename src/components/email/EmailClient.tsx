@@ -462,6 +462,7 @@ export function EmailClient() {
   const activeFolderRef = React.useRef(activeFolder);
   const selectedEmailIdRef = React.useRef<string | null>(selectedEmailId);
   const mailFoldersRef = React.useRef<MailFolder[]>([]);
+  const fetchGenerationRef = React.useRef(0);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
   const [hasLoadedCalendar, setHasLoadedCalendar] = useState(false);
@@ -470,7 +471,11 @@ export function EmailClient() {
   // --- TUTORIAL STATE ---
   const [tutorialStep, setTutorialStep] = useState<number>(() => {
     if (typeof window === "undefined") return 0;
-    return window.localStorage.getItem("ryze_tutorial_done") ? 0 : 1;
+    const done = window.localStorage.getItem("ryze_tutorial_done");
+    const hasAccounts = loadStoredAccounts().length > 0;
+    if (done && hasAccounts) return 0;
+    if (!hasAccounts) window.localStorage.removeItem("ryze_tutorial_done");
+    return 1;
   });
 
   // Watch for account connection to auto-advance tutorial
@@ -658,8 +663,11 @@ export function EmailClient() {
   const fetchLocalAndSetUI = useCallback(async () => {
     if (!window.electronAPI?.getAllLocalEmails) return;
 
+    const generation = fetchGenerationRef.current;
     try {
       const result = await window.electronAPI.getAllLocalEmails();
+
+      if (fetchGenerationRef.current !== generation) return;
 
       const nextFolders = result.folders || [];
       setMailFolders(nextFolders);
@@ -1061,12 +1069,17 @@ export function EmailClient() {
           (account) => account.id !== accountId,
         );
 
+        fetchGenerationRef.current += 1;
         setAccounts(nextAccounts);
         setEmails([]);
         setSelectedEmailId(null);
         setMailSyncError(null);
-
         setCurrentAccountId(nextAccounts[0]?.id ?? DEFAULT_PRIMARY_ACCOUNT.id);
+
+        if (nextAccounts.length === 0) {
+          window.localStorage.removeItem("ryze_tutorial_done");
+          setTutorialStep(1);
+        }
       } catch (error) {
         console.error("Failed to delete account:", error);
         setMailSyncError(
@@ -3235,7 +3248,7 @@ function TutorialOverlay({
             Add your account
           </h2>
           <p className="mb-6 text-[13px] leading-relaxed text-[var(--fg-2)]">
-            Open settings and connect your Microsoft account.
+            Open settings and connect your Microsoft or Google account.
           </p>
           <button
             onClick={onOpenSettings}
