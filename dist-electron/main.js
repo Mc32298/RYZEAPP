@@ -15931,7 +15931,19 @@ CREATE TABLE IF NOT EXISTS folder_sync_state (
 CREATE INDEX IF NOT EXISTS idx_folder_sync_state_account
 ON folder_sync_state(accountId);
 `);
+const ALLOWED_MIGRATION_TABLES = /* @__PURE__ */ new Set(["emails", "folders", "labels", "email_labels"]);
+const SAFE_IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const SAFE_COLUMN_DEF_RE = /^[A-Z]+(\s+DEFAULT\s+('[^']*'|\d+))?$/i;
 function ensureColumn(tableName, columnName, definition) {
+  if (!ALLOWED_MIGRATION_TABLES.has(tableName)) {
+    throw new Error(`ensureColumn: table "${tableName}" is not in the allowed list`);
+  }
+  if (!SAFE_IDENTIFIER_RE.test(columnName)) {
+    throw new Error(`ensureColumn: column name "${columnName}" contains invalid characters`);
+  }
+  if (!SAFE_COLUMN_DEF_RE.test(definition)) {
+    throw new Error(`ensureColumn: column definition "${definition}" contains invalid characters`);
+  }
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
   const hasColumn = columns.some((column) => column.name === columnName);
   if (!hasColumn) {

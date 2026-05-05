@@ -712,7 +712,7 @@ export function EmailClient() {
           previousEmails.map((email) => [email.messageId, email]),
         );
 
-        return mapped.map((nextEmail) => {
+        const mergedMapped = mapped.map((nextEmail) => {
           const previousEmail = previousByMessageId.get(nextEmail.messageId);
 
           if (
@@ -724,6 +724,44 @@ export function EmailClient() {
 
           return { ...nextEmail, body: nextEmail.body || "" };
         });
+
+        const now = Date.now();
+        const optimisticReplies = previousEmails.filter((email) => {
+          if (!email.messageId.startsWith("local-reply-")) return false;
+          if (now - email.timestamp.getTime() > 10 * 60 * 1000) return false;
+
+          const isAlreadySynced = mergedMapped.some((synced) => {
+            const sameAccount = synced.accountId === email.accountId;
+            const sameConversation =
+              Boolean(synced.conversationId) &&
+              synced.conversationId === email.conversationId;
+            const sameSubject =
+              synced.subject.trim().toLowerCase() ===
+              email.subject.trim().toLowerCase();
+            const sameSender =
+              synced.sender.email.trim().toLowerCase() ===
+              email.sender.email.trim().toLowerCase();
+            const nearInTime =
+              Math.abs(
+                synced.timestamp.getTime() - email.timestamp.getTime(),
+              ) <=
+              15 * 60 * 1000;
+
+            return (
+              sameAccount &&
+              sameConversation &&
+              sameSubject &&
+              sameSender &&
+              nearInTime
+            );
+          });
+
+          return !isAlreadySynced;
+        });
+
+        return [...mergedMapped, ...optimisticReplies].sort(
+          (a, b) => b.timestamp.getTime() - a.timestamp.getTime(),
+        );
       });
       setLastSyncedAt(new Date());
     } catch (error) {
@@ -2002,6 +2040,61 @@ export function EmailClient() {
         accountId,
       );
       const provider = composerAccount.provider;
+      const sourceMessage = getInlineReplyTargetMessage(
+        message,
+        conversationMessages,
+        composerAccount.email,
+      );
+      const recipients = getReplyRecipients(
+        sourceMessage,
+        composerAccount.email,
+        conversationMessages,
+      );
+      const recipientList = recipients
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const sentFolderId =
+        mailFolders.find(
+          (folder) =>
+            folder.accountId === accountId &&
+            folder.wellKnownName?.toLowerCase() === "sentitems",
+        )?.id || message.folder;
+      const optimisticReply: EmailThread = {
+        id: `${accountId}:${sentFolderId}:local-reply-${Date.now()}`,
+        accountId,
+        messageId: `local-reply-${Date.now()}`,
+        conversationId: sourceMessage.conversationId || message.conversationId,
+        inReplyTo:
+          sourceMessage.internetMessageId ||
+          sourceMessage.messageId ||
+          message.messageId,
+        sender: {
+          name: composerAccount.name || composerAccount.email,
+          email: composerAccount.email,
+          initials: getInitials(composerAccount.name || composerAccount.email),
+          color: selectProfileColor(composerAccount.email),
+        },
+        subject: buildReplySubject(sourceMessage),
+        preview: bodyText.trim().slice(0, 180),
+        body: buildInlineReplyHtml({
+          bodyText,
+          sourceEmail: sourceMessage,
+          signature: settings.signature,
+        }),
+        timestamp: new Date(),
+        isRead: true,
+        isStarred: false,
+        folder: sentFolderId,
+        folderId: sentFolderId,
+        folderLabel: "Sent",
+        labels: [],
+        threadCount: 1,
+        hasAttachment: false,
+        attachments: [],
+        to: recipientList,
+        cc: [],
+      };
 
       if (provider === "google") {
         if (!window.electronAPI?.sendGmailEmail) {
@@ -2010,26 +2103,12 @@ export function EmailClient() {
           );
         }
 
-        const sourceMessage = getInlineReplyTargetMessage(
-          message,
-          conversationMessages,
-          composerAccount.email,
-        );
-
         await window.electronAPI.sendGmailEmail({
           accountId,
-          to: getReplyRecipients(
-            sourceMessage,
-            composerAccount.email,
-            conversationMessages,
-          ),
+          to: recipients,
           cc: "",
           subject: buildReplySubject(sourceMessage),
-          body: buildInlineReplyHtml({
-            bodyText,
-            sourceEmail: sourceMessage,
-            signature: settings.signature,
-          }),
+          body: optimisticReply.body,
         });
       } else {
         if (!window.electronAPI?.replyMicrosoftEmail) {
@@ -2048,6 +2127,7 @@ export function EmailClient() {
         });
       }
 
+      setEmails((prev) => [optimisticReply, ...prev]);
       toast.success("Reply sent");
       await refreshMailboxAfterReply({
         provider: resolveManualSyncProvider(provider),
@@ -2063,6 +2143,7 @@ export function EmailClient() {
       currentAccount,
       currentAccountId,
       fetchLocalAndSetUI,
+      mailFolders,
       settings.signature,
     ],
   );

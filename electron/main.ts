@@ -136,15 +136,32 @@ CREATE INDEX IF NOT EXISTS idx_folder_sync_state_account
 ON folder_sync_state(accountId);
 `);
 
+const ALLOWED_MIGRATION_TABLES = new Set(["emails", "folders", "labels", "email_labels"]);
+const SAFE_IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const SAFE_COLUMN_DEF_RE = /^[A-Z]+(\s+DEFAULT\s+('[^']*'|\d+))?$/i;
+
 /**
  * Adds a column to an existing table only if it doesn't already exist.
  * Used for safe schema migrations without dropping/recreating the table.
+ *
+ * tableName, columnName, and definition are validated against strict allowlists
+ * before being interpolated into SQL (PRAGMA/ALTER TABLE cannot use ? placeholders).
  */
 function ensureColumn(
   tableName: string,
   columnName: string,
   definition: string,
 ) {
+  if (!ALLOWED_MIGRATION_TABLES.has(tableName)) {
+    throw new Error(`ensureColumn: table "${tableName}" is not in the allowed list`);
+  }
+  if (!SAFE_IDENTIFIER_RE.test(columnName)) {
+    throw new Error(`ensureColumn: column name "${columnName}" contains invalid characters`);
+  }
+  if (!SAFE_COLUMN_DEF_RE.test(definition)) {
+    throw new Error(`ensureColumn: column definition "${definition}" contains invalid characters`);
+  }
+
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
     name: string;
   }>;

@@ -17,7 +17,7 @@ function buildSrcdoc(html: string, isDarkMode: boolean): string {
 <meta name="color-scheme" content="${isDarkMode ? "dark" : "light"}">
 <style>
 *, *::before, *::after { box-sizing: border-box; }
-html { background: transparent; }
+html, body { background: transparent; }
 body {
   margin: 0;
   padding: 0;
@@ -25,13 +25,19 @@ body {
   font-size: 14px;
   line-height: 1.6;
   color: ${fg};
-  background: transparent;
   word-break: break-word;
   overflow-wrap: break-word;
   overflow-x: hidden;
 }
+/* Strip explicit heights from layout elements so email templates don't add blank space */
+html, body,
+table, tbody, thead, tfoot, tr,
+div, section, article, main, header, footer, aside, center, blockquote {
+  height: auto !important;
+  min-height: 0 !important;
+}
 a { color: ${linkColor}; }
-img { max-width: 100%; height: auto; }
+img { max-width: 100%; height: auto; display: block; }
 table { border-collapse: collapse; max-width: 100%; }
 pre, code { white-space: pre-wrap; }
 </style>
@@ -49,6 +55,19 @@ function isOpenableEmailLink(href: string): boolean {
   }
 }
 
+function measureContentHeight(doc: Document): number {
+  // Walk every element and find the actual bottom of the last rendered piece of
+  // content. This is more accurate than scrollHeight because scrollHeight still
+  // includes explicitly-sized elements (e.g. <table height="800">) even when
+  // their visible content is much shorter.
+  let maxBottom = 0;
+  doc.body.querySelectorAll("*").forEach((el) => {
+    const rect = (el as HTMLElement).getBoundingClientRect();
+    if (rect.bottom > maxBottom) maxBottom = rect.bottom;
+  });
+  return Math.max(maxBottom, 32);
+}
+
 export function SandboxedEmailFrame({
   html,
   isDarkMode,
@@ -63,34 +82,35 @@ export function SandboxedEmailFrame({
     const doc = iframe.contentDocument;
     if (!doc || !doc.body) return;
 
-    // Intercept clicks in the iframe from the parent context (possible because of
-    // allow-same-origin). Prevents the iframe from navigating and routes all links
-    // through Electron's setWindowOpenHandler → shell.openExternal.
     doc.addEventListener("click", (e) => {
       const anchor = (e.target as HTMLElement).closest("a");
       if (!anchor) return;
       const href = anchor.getAttribute("href") ?? "";
-      // Let in-page fragment links be (they scroll within the fixed-height iframe)
       if (!href || href.startsWith("#")) return;
       e.preventDefault();
       if (!isOpenableEmailLink(href)) return;
-      // window.open is caught by Electron's setWindowOpenHandler which calls
-      // shell.openExternal for https: / mailto: and denies everything else.
       window.open(href);
     });
 
-    // Auto-resize the iframe to its full content height so no internal scroll bar
-    // appears and the email body is fully visible in the app's own scroll container.
     const resize = () => {
-      if (iframe && doc.documentElement) {
-        iframe.style.height = `${doc.documentElement.scrollHeight}px`;
-      }
+      if (!iframe || !doc.body) return;
+      iframe.style.height = `${measureContentHeight(doc)}px`;
     };
 
     roRef.current?.disconnect();
     roRef.current = new ResizeObserver(resize);
     roRef.current.observe(doc.body);
     resize();
+
+    // Re-measure whenever any image inside the email finishes loading (or fails).
+    // Without this, images that haven't loaded yet have height 0 at onLoad time,
+    // so the iframe is sized too short and expands as each image loads.
+    doc.querySelectorAll("img").forEach((img) => {
+      if (!(img as HTMLImageElement).complete) {
+        img.addEventListener("load", resize, { once: true });
+        img.addEventListener("error", resize, { once: true });
+      }
+    });
   }, []);
 
   useEffect(() => {
