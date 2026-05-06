@@ -100,7 +100,7 @@
       }
     ],
     "mac": {
-      "icon": "public/logo.ico"
+      "icon": "public/logo-mark.ico"
     },
     "productName": "RYZE Mail",
     "directories": {
@@ -112,7 +112,7 @@
       "package.json"
     ],
     "win": {
-      "icon": "public/logo.ico",
+      "icon": "public/logo-mark.ico",
       "target": [
         {
           "target": "nsis",
