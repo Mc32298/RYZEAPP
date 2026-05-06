@@ -74,6 +74,22 @@ import { formatGoogleConnectError } from "./googleAuthErrors";
 const SETTINGS_STORAGE_KEY = "email-client-settings";
 const ACCOUNTS_STORAGE_KEY = "email-client-accounts";
 const PROFILE_COLORS = ["#A8C7A2", "#C7AE79", "#8B6F5A", "#7E9181", "#B57865"];
+const SNOOZED_FOLDER_ID = "snoozed";
+const SNOOZED_DUE_TODAY_FOLDER_ID = "snoozed-due-today";
+const SNOOZED_WAITING_FOLDER_ID = "snoozed-waiting";
+
+function getEndOfTodayTimestamp() {
+  const now = new Date();
+  now.setHours(23, 59, 59, 999);
+  return now.getTime();
+}
+
+function getDefaultSnoozeUntilIso() {
+  const now = new Date();
+  now.setDate(now.getDate() + 1);
+  now.setHours(8, 0, 0, 0);
+  return now.toISOString();
+}
 
 function loadStoredSettings(): EmailSettings {
   if (typeof window === "undefined") {
@@ -416,6 +432,11 @@ function toEmailThread(folderId: string, graphMessage: any): EmailThread {
       })),
     to: parseStoredRecipients(graphMessage.toRecipients),
     cc: parseStoredRecipients(graphMessage.ccRecipients),
+    snoozedUntil:
+      typeof graphMessage.snoozedUntil === "string" &&
+      !Number.isNaN(Date.parse(graphMessage.snoozedUntil))
+        ? new Date(graphMessage.snoozedUntil)
+        : null,
   };
 }
 
@@ -510,7 +531,11 @@ export function EmailClient() {
     if (mailFolders.length === 0) return;
 
     const isUnifiedFolder =
-      activeFolder === "all-inboxes" || activeFolder === "all-sent";
+      activeFolder === "all-inboxes" ||
+      activeFolder === "all-sent" ||
+      activeFolder === SNOOZED_FOLDER_ID ||
+      activeFolder === SNOOZED_DUE_TODAY_FOLDER_ID ||
+      activeFolder === SNOOZED_WAITING_FOLDER_ID;
 
     if (isUnifiedFolder) {
       activeFolderRef.current = activeFolder;
@@ -682,7 +707,10 @@ export function EmailClient() {
         !activeFolderExists &&
         nextFolders.length > 0 &&
         currentActiveFolder !== "all-inboxes" &&
-        currentActiveFolder !== "all-sent"
+        currentActiveFolder !== "all-sent" &&
+        currentActiveFolder !== SNOOZED_FOLDER_ID &&
+        currentActiveFolder !== SNOOZED_DUE_TODAY_FOLDER_ID &&
+        currentActiveFolder !== SNOOZED_WAITING_FOLDER_ID
       ) {
         activeFolderRef.current = "all-inboxes";
         setActiveFolder("all-inboxes" as FolderType);
@@ -931,10 +959,38 @@ export function EmailClient() {
     (folder) => folder.id === activeFolder,
   );
   const activeKnownFolder = activeMailFolder?.wellKnownName || "";
+  const nowTimestamp = Date.now();
+  const endOfTodayTimestamp = getEndOfTodayTimestamp();
 
   const folderEmails = emails.filter((email) => {
+    const snoozedUntilTimestamp = email.snoozedUntil?.getTime() ?? null;
+    const isSnoozedInFuture =
+      snoozedUntilTimestamp !== null && snoozedUntilTimestamp > nowTimestamp;
+
     if (activeLabelId) {
       return email.labels.some((label) => label.id === activeLabelId);
+    }
+
+    if (activeFolder === SNOOZED_FOLDER_ID) {
+      return snoozedUntilTimestamp !== null;
+    }
+
+    if (activeFolder === SNOOZED_DUE_TODAY_FOLDER_ID) {
+      return (
+        snoozedUntilTimestamp !== null &&
+        snoozedUntilTimestamp <= endOfTodayTimestamp
+      );
+    }
+
+    if (activeFolder === SNOOZED_WAITING_FOLDER_ID) {
+      return (
+        snoozedUntilTimestamp !== null &&
+        snoozedUntilTimestamp > endOfTodayTimestamp
+      );
+    }
+
+    if (isSnoozedInFuture) {
+      return false;
     }
 
     if (activeFolder === "all-inboxes") {
@@ -1031,6 +1087,18 @@ export function EmailClient() {
     (acc, email) => {
       if (!email.isRead) {
         acc[email.folder] = (acc[email.folder] || 0) + 1;
+
+        const snoozedUntilTimestamp = email.snoozedUntil?.getTime() ?? null;
+        if (snoozedUntilTimestamp !== null) {
+          acc[SNOOZED_FOLDER_ID] = (acc[SNOOZED_FOLDER_ID] || 0) + 1;
+          if (snoozedUntilTimestamp <= endOfTodayTimestamp) {
+            acc[SNOOZED_DUE_TODAY_FOLDER_ID] =
+              (acc[SNOOZED_DUE_TODAY_FOLDER_ID] || 0) + 1;
+          } else {
+            acc[SNOOZED_WAITING_FOLDER_ID] =
+              (acc[SNOOZED_WAITING_FOLDER_ID] || 0) + 1;
+          }
+        }
       }
 
       return acc;
@@ -1059,6 +1127,12 @@ export function EmailClient() {
       ? "All Inboxes"
       : activeFolder === "all-sent"
         ? "Sent"
+        : activeFolder === SNOOZED_FOLDER_ID
+          ? "Snoozed"
+          : activeFolder === SNOOZED_DUE_TODAY_FOLDER_ID
+            ? "Due Today"
+            : activeFolder === SNOOZED_WAITING_FOLDER_ID
+              ? "Waiting"
         : activeMailFolder?.displayName || "Inbox";
 
   const folderUnreadCount = activeLabel
@@ -1493,12 +1567,26 @@ export function EmailClient() {
   );
 
   const handleSnooze = useCallback(
-    (id: string) => {
-      setEmails((prev) => prev.filter((email) => email.id !== id));
+    async (id: string, snoozedUntilOverride?: string) => {
+      const email = emails.find((item) => item.id === id);
+      if (!email || !window.electronAPI?.snoozeEmail) return;
+
+      const snoozedUntil = snoozedUntilOverride || getDefaultSnoozeUntilIso();
+
+      try {
+        await window.electronAPI.snoozeEmail({
+          accountId: email.accountId || currentAccountId,
+          messageId: email.messageId,
+          snoozedUntil,
+        });
+        await fetchLocalAndSetUI();
+      } catch (error) {
+        console.error("Failed to snooze email:", error);
+      }
+
       if (selectedEmailId === id) setSelectedEmailId(null);
-      alert("Email snoozed locally. (Backend snooze sync coming soon!)");
     },
-    [selectedEmailId],
+    [currentAccountId, emails, fetchLocalAndSetUI, selectedEmailId],
   );
 
   const moveEmailToFolderAndRefresh = useCallback(
@@ -2593,9 +2681,9 @@ export function EmailClient() {
   );
 
   const handleSnoozeThread = useCallback(
-    (messageIds: string[]) => {
+    async (messageIds: string[], snoozedUntilOverride?: string) => {
       for (const messageId of messageIds) {
-        handleSnooze(messageId);
+        await handleSnooze(messageId, snoozedUntilOverride);
       }
     },
     [handleSnooze],
@@ -2971,8 +3059,11 @@ export function EmailClient() {
             onBulkMoveToFolder={handleBulkMoveToFolder}
             onBulkApplyLabel={handleBulkApplyLabel}
             folders={mailFolders}
-            onSnooze={(id) =>
-              handleSnoozeThread(threadRowMessageIds.get(id) || [id])
+            onSnooze={(id, snoozedUntil) =>
+              handleSnoozeThread(
+                threadRowMessageIds.get(id) || [id],
+                snoozedUntil,
+              )
             }
             labels={emailLabels}
           />

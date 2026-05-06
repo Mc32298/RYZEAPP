@@ -40,7 +40,7 @@ interface MessageListProps {
   density: DensityMode;
   showPreviewText: boolean;
   showAvatars: boolean;
-  onSnooze: (id: string) => void;
+  onSnooze: (id: string, snoozedUntil?: string) => void;
 
   selectedEmailIds: string[];
   onToggleEmailSelection: (emailId: string) => void;
@@ -53,6 +53,44 @@ interface MessageListProps {
   onBulkApplyLabel: (emailIds: string[], labelId: string) => Promise<void>;
   folders: MailFolder[];
   labels: EmailLabel[];
+}
+
+type SnoozePreset = {
+  label: string;
+  value: string;
+};
+
+function toIsoAtLocalTime(base: Date, hours: number, minutes: number) {
+  const next = new Date(base);
+  next.setHours(hours, minutes, 0, 0);
+  return next.toISOString();
+}
+
+function buildSnoozePresets(): SnoozePreset[] {
+  const now = new Date();
+  const laterToday = new Date(now);
+  laterToday.setHours(now.getHours() + 3, 0, 0, 0);
+
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const nextWeek = new Date(now);
+  nextWeek.setDate(nextWeek.getDate() + 7);
+
+  return [
+    { label: "Later today", value: laterToday.toISOString() },
+    { label: "Tomorrow morning", value: toIsoAtLocalTime(tomorrow, 8, 0) },
+    { label: "Next week", value: toIsoAtLocalTime(nextWeek, 8, 0) },
+  ];
+}
+
+function formatDateTimeLocalValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
 const bulkToolbarVariants = {
@@ -125,13 +163,21 @@ function MessageRow({
   onArchive: () => void;
   onDelete: () => void;
   onToggleSelected: () => void;
-  onSnooze: () => void;
+  onSnooze: (snoozedUntil?: string) => void;
   density: DensityMode;
   showPreviewText: boolean;
   showAvatars: boolean;
   isBulkSelected: boolean;
 }) {
   const [isHovered, setIsHovered] = useState(false);
+  const [isSnoozeMenuOpen, setIsSnoozeMenuOpen] = useState(false);
+  const [isCustomSnoozeOpen, setIsCustomSnoozeOpen] = useState(false);
+  const [customSnoozeValue, setCustomSnoozeValue] = useState(() => {
+    const nextHour = new Date();
+    nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+    return formatDateTimeLocalValue(nextHour);
+  });
+  const snoozePresets = buildSnoozePresets();
   const rowPadding = density === "compact" ? "py-2.5" : "py-3";
   const email = row.latestMessage;
 
@@ -337,17 +383,83 @@ function MessageRow({
               <Trash2 size={13} strokeWidth={1.7} />
             </motion.button>
 
-            <motion.button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSnooze();
-              }}
-              className="rounded-[var(--radius-ryze-sm)] p-1.5 text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
-              title="Snooze"
-            >
-              <Bell size={13} strokeWidth={1.7} />
-            </motion.button>
+            <div className="relative">
+              <motion.button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsSnoozeMenuOpen((prev) => !prev);
+                }}
+                className="rounded-[var(--radius-ryze-sm)] p-1.5 text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
+                title="Snooze"
+              >
+                <Bell size={13} strokeWidth={1.7} />
+              </motion.button>
+              <AnimatePresence>
+                {isSnoozeMenuOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -4, scale: 0.98 }}
+                    transition={{ duration: 0.12 }}
+                    className="absolute right-0 top-full z-30 mt-1 w-44 rounded-[var(--radius-ryze-md)] border border-[var(--border-1)] bg-[var(--bg-2)] p-1 shadow-[0_16px_48px_-12px_oklch(0_0_0_/_0.6)]"
+                  >
+                    {snoozePresets.map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setIsSnoozeMenuOpen(false);
+                          setIsCustomSnoozeOpen(false);
+                          onSnooze(preset.value);
+                        }}
+                        className="block w-full rounded-[var(--radius-ryze-sm)] px-2.5 py-1.5 text-left text-[12px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setIsCustomSnoozeOpen((prev) => !prev);
+                      }}
+                      className="mt-1 block w-full rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] px-2.5 py-1.5 text-left text-[12px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
+                    >
+                      Pick date & time
+                    </button>
+                    {isCustomSnoozeOpen && (
+                      <div className="mt-2 rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] p-2">
+                        <input
+                          type="datetime-local"
+                          value={customSnoozeValue}
+                          onChange={(event) =>
+                            setCustomSnoozeValue(event.target.value)
+                          }
+                          className="w-full rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-1)] px-2 py-1.5 text-[12px] text-[var(--fg-1)] outline-none focus:border-[var(--ryze-accent)]"
+                        />
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (!customSnoozeValue) return;
+                            const parsed = new Date(customSnoozeValue);
+                            if (Number.isNaN(parsed.getTime())) return;
+                            setIsSnoozeMenuOpen(false);
+                            setIsCustomSnoozeOpen(false);
+                            onSnooze(parsed.toISOString());
+                          }}
+                          className="mt-2 w-full rounded-[var(--radius-ryze-sm)] bg-[var(--ryze-accent)] px-2 py-1.5 text-[12px] font-medium text-[var(--ryze-accent-fg)] transition-colors hover:bg-[var(--ryze-accent-hover)]"
+                        >
+                          Apply
+                        </button>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -723,7 +835,9 @@ export function MessageList({
                 onToggleEmailSelection(row.latestMessage.id)}
               onArchive={() => onArchive(row.latestMessage.id)}
               onDelete={() => onDelete(row.latestMessage.id)}
-              onSnooze={() => onSnooze(row.latestMessage.id)}
+              onSnooze={(snoozedUntil) =>
+                onSnooze(row.latestMessage.id, snoozedUntil)
+              }
               density={density}
               showPreviewText={showPreviewText}
               showAvatars={showAvatars}

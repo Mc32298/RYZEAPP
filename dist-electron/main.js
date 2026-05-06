@@ -15887,7 +15887,8 @@ db.exec(`
     fromName         TEXT,
     fromAddress      TEXT,
     toRecipients     TEXT,
-    ccRecipients     TEXT
+    ccRecipients     TEXT,
+    snoozedUntil     TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_emails_account_folder ON emails(accountId, folder);
@@ -15955,6 +15956,7 @@ ensureColumn("folders", "path", "TEXT DEFAULT ''");
 ensureColumn("folders", "icon", "TEXT DEFAULT ''");
 ensureColumn("emails", "isStarred", "INTEGER DEFAULT 0");
 ensureColumn("emails", "attachments", "TEXT DEFAULT '[]'");
+ensureColumn("emails", "snoozedUntil", "TEXT");
 const stateFilePath = require$$1.join(app.getPath("userData"), "window-state.json");
 const settingsFilePath = require$$1.join(app.getPath("userData"), "ryze-settings.json");
 const microsoftTokenFilePath = require$$1.join(
@@ -17541,7 +17543,8 @@ function rowsToMessages(rows) {
       }
     },
     toRecipients: JSON.parse(row.toRecipients || "[]"),
-    ccRecipients: JSON.parse(row.ccRecipients || "[]")
+    ccRecipients: JSON.parse(row.ccRecipients || "[]"),
+    snoozedUntil: row.snoozedUntil || null
   }));
 }
 function getLocalFolders(accountId) {
@@ -18974,6 +18977,34 @@ ipcMain.handle("microsoft-mail:mark-unread", async (_event, payload) => {
   );
   return { success: true };
 });
+ipcMain.handle("mail:snooze", (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+  const messageId = validateMessageId(payload?.messageId);
+  const snoozedUntil = typeof payload?.snoozedUntil === "string" ? payload.snoozedUntil : "";
+  if (!snoozedUntil || Number.isNaN(Date.parse(snoozedUntil))) {
+    throw new Error("Invalid snooze date");
+  }
+  db.prepare(
+    `
+    UPDATE emails
+    SET snoozedUntil = ?
+    WHERE accountId = ? AND id = ?
+  `
+  ).run(snoozedUntil, accountId, messageId);
+  return { success: true };
+});
+ipcMain.handle("mail:clear-snooze", (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+  const messageId = validateMessageId(payload?.messageId);
+  db.prepare(
+    `
+    UPDATE emails
+    SET snoozedUntil = NULL
+    WHERE accountId = ? AND id = ?
+  `
+  ).run(accountId, messageId);
+  return { success: true };
+});
 ipcMain.handle("microsoft-mail:getAllLocal", () => {
   const folders = db.prepare(
     `SELECT * FROM folders ORDER BY accountId, path COLLATE NOCASE ASC`
@@ -18983,7 +19014,7 @@ ipcMain.handle("microsoft-mail:getAllLocal", () => {
     SELECT
       id, accountId, folder, subject, bodyPreview, bodyContentType, bodyContent,
       receivedDateTime, isRead, hasAttachments, isStarred, attachments,
-      fromName, fromAddress, toRecipients, ccRecipients
+      fromName, fromAddress, toRecipients, ccRecipients, snoozedUntil
     FROM emails
     ORDER BY receivedDateTime DESC
   `

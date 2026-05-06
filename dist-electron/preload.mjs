@@ -335,6 +335,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
     messageId: assertString(messageId, "messageId", 2048),
     isRead: true
   }),
+  snoozeEmail: (payload) => {
+    if (!payload || typeof payload !== "object") {
+      throw new TypeError("payload is required");
+    }
+    return ipcRenderer.invoke("mail:snooze", {
+      accountId: assertString(payload.accountId, "accountId", 256),
+      messageId: assertString(payload.messageId, "messageId", 2048),
+      snoozedUntil: assertString(payload.snoozedUntil, "snoozedUntil", 64)
+    });
+  },
+  clearEmailSnooze: (accountId, messageId) => ipcRenderer.invoke("mail:clear-snooze", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048)
+  }),
   getMicrosoftEmailsLocal: (accountId) => ipcRenderer.invoke("microsoft-mail:getLocal", {
     accountId: assertString(accountId, "accountId", 256)
   }),

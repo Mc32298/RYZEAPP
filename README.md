@@ -195,7 +195,7 @@ All settings are saved locally in `localStorage` and optionally synced to the ba
  
 ## Roadmap
  
-- [ ] **Gmail / Google Workspace support** via Google OAuth + Gmail API
+- [x] **Gmail / Google Workspace support** via Google OAuth + Gmail API
 - [ ] **iCloud Mail support**
 - [ ] **Passkey / WebAuthn authentication** for session unlock
 - [ ] **Split view** — inbox alongside calendar, Notion, or Todoist
@@ -203,8 +203,8 @@ All settings are saved locally in `localStorage` and optionally synced to the ba
 - [ ] **Custom notification sounds**
 - [ ] **macOS and iOS native wrappers**
 - [ ] **End-to-end encrypted local storage** option
-- [ ] **Thread view** — group replies into a conversation
-- [ ] **Search across all folders** — full-text SQLite FTS5 index
+- [x] **Thread view** — group replies into a conversation
+- [x] **Search across all folders** — full-text SQLite FTS5 index
 - [ ] **Built-in Notion integration**
 - [ ] **Built-in Todoist integration**
 ---

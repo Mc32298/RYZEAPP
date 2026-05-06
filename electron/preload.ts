@@ -80,6 +80,12 @@ type EmailLabelPayload = {
   labelId: string;
 };
 
+type SnoozeEmailPayload = {
+  accountId: string;
+  messageId: string;
+  snoozedUntil: string;
+};
+
 const VALID_DESTINATION_FOLDERS = new Set([
   "archive",
   "deleteditems",
@@ -516,6 +522,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
       accountId: assertString(accountId, "accountId", 256),
       messageId: assertString(messageId, "messageId", 2048),
       isRead: true,
+    }),
+
+  snoozeEmail: (payload: SnoozeEmailPayload) => {
+    if (!payload || typeof payload !== "object") {
+      throw new TypeError("payload is required");
+    }
+
+    return ipcRenderer.invoke("mail:snooze", {
+      accountId: assertString(payload.accountId, "accountId", 256),
+      messageId: assertString(payload.messageId, "messageId", 2048),
+      snoozedUntil: assertString(payload.snoozedUntil, "snoozedUntil", 64),
+    });
+  },
+
+  clearEmailSnooze: (accountId: string, messageId: string) =>
+    ipcRenderer.invoke("mail:clear-snooze", {
+      accountId: assertString(accountId, "accountId", 256),
+      messageId: assertString(messageId, "messageId", 2048),
     }),
 
   getMicrosoftEmailsLocal: (accountId: string) =>

@@ -23,6 +23,7 @@ interface GraphMessage {
   from?: GraphMessageAddress;
   toRecipients?: GraphMessageAddress[];
   ccRecipients?: GraphMessageAddress[];
+  snoozedUntil?: string | null;
 }
 
 declare global {
@@ -193,6 +194,17 @@ declare global {
       ) => Promise<{ success: boolean }>;
 
       markMicrosoftEmailAsRead: (
+        accountId: string,
+        messageId: string,
+      ) => Promise<{ success: boolean }>;
+
+      snoozeEmail: (payload: {
+        accountId: string;
+        messageId: string;
+        snoozedUntil: string;
+      }) => Promise<{ success: boolean }>;
+
+      clearEmailSnooze: (
         accountId: string,
         messageId: string,
       ) => Promise<{ success: boolean }>;

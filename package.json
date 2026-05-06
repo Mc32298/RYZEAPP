@@ -1,7 +1,7 @@
 {
   "name": "starter",
   "private": false,
-  "version": "1.0.5",
+  "version": "1.0.6",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -100,7 +100,7 @@
       }
     ],
     "mac": {
-      "icon": "public/logo-mark.ico"
+      "icon": "public/logogo.ico"
     },
     "productName": "RYZE Mail",
     "directories": {
@@ -112,7 +112,7 @@
       "package.json"
     ],
     "win": {
-      "icon": "public/logo-mark.ico",
+      "icon": "public/logogo.ico",
       "target": [
         {
           "target": "nsis",

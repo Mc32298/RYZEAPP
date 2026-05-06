@@ -37,6 +37,7 @@ export interface EmailThread {
   attachments?: EmailAttachment[];
   to: string[];
   cc?: string[];
+  snoozedUntil?: Date | null;
 }
 
 export interface EmailThreadRow {

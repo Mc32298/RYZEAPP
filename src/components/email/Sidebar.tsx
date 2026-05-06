@@ -8,6 +8,9 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Inbox,
+  Bell,
+  Clock3,
+  Timer,
   FileEdit,
   Send,
   Archive,
@@ -63,6 +66,12 @@ const KNOWN_FOLDERS = [
   { key: "sentitems", icon: Send, label: "Sent" },
   { key: "archive", icon: Archive, label: "Archive" },
   { key: "deleteditems", icon: Trash2, label: "Trash" },
+];
+
+const SNOOZE_VIEWS = [
+  { key: "snoozed", icon: Bell, label: "Snoozed" },
+  { key: "snoozed-due-today", icon: Clock3, label: "Due Today" },
+  { key: "snoozed-waiting", icon: Timer, label: "Waiting" },
 ];
 
 type KnownFolderConfig = (typeof KNOWN_FOLDERS)[number];
@@ -531,6 +540,40 @@ export function Sidebar({
                   {(unreadCounts[folder.id] || 0) > 0 && (
                     <span className="font-mono-jetbrains text-[10.5px] font-medium text-[var(--fg-1)]">
                       {unreadCounts[folder.id] || 0}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+
+            {SNOOZE_VIEWS.map(({ key, icon: Icon, label }) => {
+              const isActive = activeFolder === key && !activeLabelId;
+              const unread = unreadCounts[key] || 0;
+
+              return (
+                <button
+                  key={key}
+                  onClick={() => {
+                    onFolderSelect(key);
+                    onLabelSelect("");
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between rounded-[6px] border-l-2 px-2.5 py-1.5 text-[13px] transition-colors",
+                    isActive
+                      ? "border-[var(--ryze-accent)] bg-[var(--bg-3)] font-medium text-[var(--fg-0)]"
+                      : "border-transparent text-[var(--fg-1)] hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]",
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <Icon
+                      size={15}
+                      className={isActive ? "text-[var(--ryze-accent)]" : ""}
+                    />
+                    {label}
+                  </div>
+                  {unread > 0 && (
+                    <span className="font-mono-jetbrains text-[10.5px] font-medium text-[var(--fg-1)]">
+                      {unread}
                     </span>
                   )}
                 </button>
