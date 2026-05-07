@@ -1,13 +1,16 @@
 import type { Account } from "@/types/email";
 
 export function resolveManualSyncProvider(provider: Account["provider"]) {
-  return provider === "google" ? "google" : "microsoft";
+  if (provider === "google") return "google";
+  if (provider === "imap") return "imap";
+  return "microsoft";
 }
 
 export async function refreshMailboxAfterReply({
   provider,
   accountId,
   syncGmailEmails,
+  syncImapEmails,
   syncMicrosoftEmails,
   syncMicrosoftInbox,
   refreshLocalUi,
@@ -15,12 +18,15 @@ export async function refreshMailboxAfterReply({
   provider: ReturnType<typeof resolveManualSyncProvider>;
   accountId: string;
   syncGmailEmails?: (accountId: string) => Promise<unknown>;
+  syncImapEmails?: (accountId: string) => Promise<unknown>;
   syncMicrosoftEmails?: (accountId: string) => Promise<unknown>;
   syncMicrosoftInbox?: (accountId: string) => Promise<unknown>;
   refreshLocalUi: () => Promise<unknown>;
 }) {
   if (provider === "google") {
     await syncGmailEmails?.(accountId);
+  } else if (provider === "imap") {
+    await syncImapEmails?.(accountId);
   } else {
     if (syncMicrosoftEmails) {
       await syncMicrosoftEmails(accountId);

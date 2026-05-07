@@ -99,6 +99,6 @@ export interface Account {
   email: string;
   initials: string;
   color: string;
-  provider?: "local" | "microsoft" | "google";
+  provider?: "local" | "microsoft" | "google" | "imap";
   externalId?: string;
 }

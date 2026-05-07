@@ -29,6 +29,8 @@ import {
   type AiProvider,
 } from "./emailPreferences";
 import { cn } from "@/lib/utils";
+import type { EmailThread } from "@/types/email";
+import { derivePrivacyReport } from "./privacyReport";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -40,12 +42,26 @@ interface SettingsModalProps {
   onSettingsChange: (updates: Partial<EmailSettings>) => void;
   onConnectMicrosoft: () => void;
   onConnectGoogle: () => void;
+  onConnectImap: (payload: ConnectImapAccountPayload) => void;
   onDeleteAccount: (accountId: string) => void;
   realStorageGB: number;
   isConnectingMicrosoft: boolean;
   connectMicrosoftError: string | null;
   isConnectingGoogle: boolean;
   connectGoogleError: string | null;
+  isConnectingImap: boolean;
+  connectImapError: string | null;
+  emails: EmailThread[];
+}
+
+interface ConnectImapAccountPayload {
+  email: string;
+  displayName: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  password: string;
 }
 
 type TabType =
@@ -94,6 +110,17 @@ type AiProviderKeyStatus = {
   source: "local" | "environment" | null;
   updatedAt: string | null;
   encryptionAvailable: boolean;
+};
+
+type AccountHealthSnapshot = {
+  accountId: string;
+  provider: "microsoft" | "google" | "imap";
+  syncStatus: "ok" | "warning" | "idle";
+  tokenStatus: "ok" | "expiring" | "expired" | "n/a";
+  tokenExpiresAt: string | null;
+  lastSyncAt: string | null;
+  folderErrors: number;
+  storageBytes: number;
 };
 
 const tabs: TabConfig[] = [
@@ -316,11 +343,15 @@ export function SettingsModal({
   onSettingsChange,
   onConnectMicrosoft,
   onConnectGoogle,
+  onConnectImap,
   onDeleteAccount,
   isConnectingMicrosoft,
   connectMicrosoftError,
   isConnectingGoogle,
   connectGoogleError,
+  isConnectingImap,
+  connectImapError,
+  emails,
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = React.useState<TabType>("accounts");
   const [isAddEmailOpen, setIsAddEmailOpen] = React.useState(false);
@@ -328,12 +359,51 @@ export function SettingsModal({
     React.useState(false);
   const [hasStartedGoogleConnect, setHasStartedGoogleConnect] =
     React.useState(false);
+  const [hasStartedImapConnect, setHasStartedImapConnect] =
+    React.useState(false);
+  const [isImapFormOpen, setIsImapFormOpen] = React.useState(false);
+  const [imapDraft, setImapDraft] = React.useState<ConnectImapAccountPayload>({
+    email: "",
+    displayName: "",
+    host: "",
+    port: 993,
+    secure: true,
+    username: "",
+    password: "",
+  });
   const [geminiApiKeyDraft, setGeminiApiKeyDraft] = React.useState("");
   const [geminiKeyStatus, setGeminiKeyStatus] =
     React.useState<AiProviderKeyStatus | null>(null);
   const [isSavingGeminiKey, setIsSavingGeminiKey] = React.useState(false);
   const [geminiKeyMessage, setGeminiKeyMessage] = React.useState<string | null>(
     null,
+  );
+  const [accountHealth, setAccountHealth] = React.useState<
+    Record<string, AccountHealthSnapshot>
+  >({});
+  const [backupMessage, setBackupMessage] = React.useState<string | null>(null);
+  const [isBackupBusy, setIsBackupBusy] = React.useState(false);
+  const trustedSenderEmails = React.useMemo(() => {
+    if (typeof window === "undefined") return [] as string[];
+    try {
+      const raw = window.localStorage.getItem("email-client-trusted-image-senders");
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed)
+        ? parsed.filter((item): item is string => typeof item === "string")
+        : [];
+    } catch {
+      return [];
+    }
+  }, [isOpen, activeTab]);
+
+  const privacyReport = React.useMemo(
+    () =>
+      derivePrivacyReport({
+        emails,
+        blockRemoteImages: settings.blockRemoteImages,
+        trustedSenderEmails,
+      }),
+    [emails, settings.blockRemoteImages, trustedSenderEmails],
   );
   const activeTabConfig = tabs.find((tab) => tab.id === activeTab) ?? tabs[0];
   const tabGroups = React.useMemo(() => {
@@ -348,6 +418,9 @@ export function SettingsModal({
     if (!isOpen) {
       setIsAddEmailOpen(false);
       setHasStartedMicrosoftConnect(false);
+      setHasStartedGoogleConnect(false);
+      setHasStartedImapConnect(false);
+      setIsImapFormOpen(false);
       setGeminiApiKeyDraft("");
       setGeminiKeyMessage(null);
     }
@@ -372,6 +445,36 @@ export function SettingsModal({
     if (!isOpen || activeTab !== "ai") return;
     void refreshGeminiKeyStatus();
   }, [activeTab, isOpen, refreshGeminiKeyStatus]);
+
+  React.useEffect(() => {
+    if (!isOpen || activeTab !== "accounts") return;
+    if (!window.electronAPI?.getAccountHealth) return;
+
+    window.electronAPI
+      .getAccountHealth()
+      .then((items) => {
+        const next = Object.fromEntries(
+          items.map((item) => [item.accountId, item]),
+        );
+        setAccountHealth(next);
+      })
+      .catch(() => {
+        setAccountHealth({});
+      });
+  }, [activeTab, isOpen]);
+
+  const formatBytes = (bytes: number) => {
+    if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const formatTimestamp = (value: string | null) => {
+    if (!value) return "never";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "unknown";
+    return date.toLocaleString();
+  };
 
   const handleSaveGeminiKey = async () => {
     const trimmedKey = geminiApiKeyDraft.trim();
@@ -429,6 +532,8 @@ export function SettingsModal({
     if (!isAddEmailOpen) {
       setHasStartedMicrosoftConnect(false);
       setHasStartedGoogleConnect(false);
+      setHasStartedImapConnect(false);
+      setIsImapFormOpen(false);
       return;
     }
 
@@ -441,6 +546,12 @@ export function SettingsModal({
       setIsAddEmailOpen(false);
       setHasStartedGoogleConnect(false);
     }
+
+    if (hasStartedImapConnect && !isConnectingImap && !connectImapError) {
+      setIsAddEmailOpen(false);
+      setIsImapFormOpen(false);
+      setHasStartedImapConnect(false);
+    }
   }, [
     isAddEmailOpen,
     hasStartedMicrosoftConnect,
@@ -449,6 +560,10 @@ export function SettingsModal({
     hasStartedGoogleConnect,
     isConnectingGoogle,
     connectGoogleError,
+    isImapFormOpen,
+    hasStartedImapConnect,
+    isConnectingImap,
+    connectImapError,
   ]);
 
   const renderContent = () => {
@@ -469,55 +584,88 @@ export function SettingsModal({
                   accounts.map((account) => (
                     <div
                       key={account.id}
-                      className="flex items-center gap-3 rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-1)] px-3 py-3"
+                      className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-1)] px-3 py-3"
                     >
-                      <div
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-xs font-semibold"
-                        style={{
-                          backgroundColor: `${account.color}33`,
-                          color: account.color,
-                        }}
-                      >
-                        {account.initials}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-[var(--fg-0)]">
-                          {account.email}
-                        </p>
-                        <p className="truncate text-xs font-mono-jetbrains text-[var(--fg-3)]">
-                          {account.provider === "microsoft"
-                            ? "outlook.office365.com  ·  OAuth2"
-                            : account.provider === "google"
-                            ? "gmail.googleapis.com  ·  OAuth2"
-                            : "imap.fastmail.com  ·  TLS"}
-                        </p>
-                      </div>
-                      <span
-                        className={cn(
-                          "rounded-[4px] border px-2 py-1 font-mono-jetbrains text-[10px]",
-                          account.provider === "microsoft" || account.provider === "google"
-                            ? "border-[var(--success-token)] text-[var(--success-token)]"
-                            : "border-[var(--warning-token)] text-[var(--warning-token)]",
-                        )}
-                      >
-                        {account.provider === "microsoft" || account.provider === "google" ? "ok" : "auth"}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const confirmed = window.confirm(
-                            `Remove ${account.email} from this app?\n\nThis will delete the local cached emails and disconnect the account. It will not delete anything from Microsoft Outlook.`,
-                          );
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-xs font-semibold"
+                          style={{
+                            backgroundColor: `${account.color}33`,
+                            color: account.color,
+                          }}
+                        >
+                          {account.initials}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-[var(--fg-0)]">
+                            {account.email}
+                          </p>
+                          <p className="truncate text-xs font-mono-jetbrains text-[var(--fg-3)]">
+                            {account.provider === "microsoft"
+                              ? "outlook.office365.com  ·  OAuth2"
+                              : account.provider === "google"
+                              ? "gmail.googleapis.com  ·  OAuth2"
+                              : `${account.externalId || "imap mailbox"}  ·  TLS`}
+                          </p>
+                        </div>
+                        <span
+                          className={cn(
+                            "rounded-[4px] border px-2 py-1 font-mono-jetbrains text-[10px]",
+                            account.provider === "microsoft" ||
+                              account.provider === "google"
+                              ? "border-[var(--success-token)] text-[var(--success-token)]"
+                              : "border-[var(--warning-token)] text-[var(--warning-token)]",
+                          )}
+                        >
+                          {account.provider === "microsoft" ||
+                          account.provider === "google"
+                            ? "ok"
+                            : "setup"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const confirmed = window.confirm(
+                              `Remove ${account.email} from this app?\n\nThis will delete the local cached emails and disconnect the account. It will not delete anything from Microsoft Outlook.`,
+                            );
 
-                          if (!confirmed) return;
+                            if (!confirmed) return;
 
-                          onDeleteAccount(account.id);
-                        }}
-                        className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-subtle)] p-1.5 text-[var(--fg-3)] transition-colors hover:border-[var(--danger-token)] hover:text-[var(--danger-token)]"
-                        title="Remove account"
-                      >
-                        <Trash2 size={13} strokeWidth={1.6} />
-                      </button>
+                            onDeleteAccount(account.id);
+                          }}
+                          className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-subtle)] p-1.5 text-[var(--fg-3)] transition-colors hover:border-[var(--danger-token)] hover:text-[var(--danger-token)]"
+                          title="Remove account"
+                        >
+                          <Trash2 size={13} strokeWidth={1.6} />
+                        </button>
+                      </div>
+                      {accountHealth[account.id] && (
+                        <div className="mt-3 grid grid-cols-2 gap-2 border-t border-[var(--border-subtle)] pt-3">
+                          <p className="text-[11px] text-[var(--fg-2)]">
+                            Sync: {accountHealth[account.id].syncStatus}
+                          </p>
+                          <p className="text-[11px] text-[var(--fg-2)]">
+                            Token: {accountHealth[account.id].tokenStatus}
+                          </p>
+                          <p className="text-[11px] text-[var(--fg-2)]">
+                            Last sync: {formatTimestamp(accountHealth[account.id].lastSyncAt)}
+                          </p>
+                          <p className="text-[11px] text-[var(--fg-2)]">
+                            Expires: {formatTimestamp(accountHealth[account.id].tokenExpiresAt)}
+                          </p>
+                          <p className="text-[11px] text-[var(--fg-2)]">
+                            Folder errors: {accountHealth[account.id].folderErrors}
+                          </p>
+                          <p className="text-[11px] text-[var(--fg-2)]">
+                            Storage: {formatBytes(accountHealth[account.id].storageBytes)}
+                          </p>
+                        </div>
+                      )}
+                      {!accountHealth[account.id] && (
+                        <p className="mt-3 border-t border-[var(--border-subtle)] pt-3 text-[11px] text-[var(--fg-3)]">
+                          Health snapshot unavailable.
+                        </p>
+                      )}
                     </div>
                   ))
                 )}
@@ -808,6 +956,29 @@ export function SettingsModal({
         return (
           <div className="space-y-6">
             <SettingsSection
+              title="Privacy Report"
+              description="Local summary of tracker blocking, suspicious links, trusted senders, and sanitized content signals."
+            >
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-1)] px-3 py-2 text-[12px] text-[var(--fg-2)]">
+                  Blocked trackers: {privacyReport.blockedTrackers}
+                </div>
+                <div className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-1)] px-3 py-2 text-[12px] text-[var(--fg-2)]">
+                  Remote images blocked: {privacyReport.remoteImagesBlocked}
+                </div>
+                <div className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-1)] px-3 py-2 text-[12px] text-[var(--fg-2)]">
+                  Suspicious links: {privacyReport.suspiciousLinks}
+                </div>
+                <div className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-1)] px-3 py-2 text-[12px] text-[var(--fg-2)]">
+                  Trusted senders: {privacyReport.trustedSenders}
+                </div>
+                <div className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-1)] px-3 py-2 text-[12px] text-[var(--fg-2)]">
+                  Unsafe content removed: {privacyReport.unsafeContentRemoved}
+                </div>
+              </div>
+            </SettingsSection>
+
+            <SettingsSection
               title="Protection"
               description="These controls apply directly while reading mail."
             >
@@ -913,6 +1084,77 @@ export function SettingsModal({
                     }
                   />
                 </div>
+              </div>
+            </SettingsSection>
+
+            <SettingsSection
+              title="Encrypted Backup"
+              description="Export or import encrypted local backups for metadata, settings, labels, and local mail cache."
+            >
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={isBackupBusy}
+                    onClick={async () => {
+                      if (!window.electronAPI?.exportEncryptedBackup) return;
+                      setIsBackupBusy(true);
+                      setBackupMessage(null);
+                      try {
+                        const result = await window.electronAPI.exportEncryptedBackup();
+                        if (result.canceled) return;
+                        setBackupMessage(
+                          result.success
+                            ? `Backup exported${result.filePath ? `: ${result.filePath}` : "."}`
+                            : "Backup export failed.",
+                        );
+                      } catch (error) {
+                        setBackupMessage(
+                          error instanceof Error ? error.message : "Backup export failed.",
+                        );
+                      } finally {
+                        setIsBackupBusy(false);
+                      }
+                    }}
+                    className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-1)] px-3 py-2 text-sm text-[var(--fg-1)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)] disabled:opacity-60"
+                  >
+                    Export backup
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isBackupBusy}
+                    onClick={async () => {
+                      if (!window.electronAPI?.importEncryptedBackup) return;
+                      setIsBackupBusy(true);
+                      setBackupMessage(null);
+                      try {
+                        const result = await window.electronAPI.importEncryptedBackup();
+                        if (result.canceled) return;
+                        setBackupMessage(
+                          result.success
+                            ? `Backup imported${result.filePath ? `: ${result.filePath}` : "."}`
+                            : "Backup import failed.",
+                        );
+                      } catch (error) {
+                        setBackupMessage(
+                          error instanceof Error ? error.message : "Backup import failed.",
+                        );
+                      } finally {
+                        setIsBackupBusy(false);
+                      }
+                    }}
+                    className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-1)] px-3 py-2 text-sm text-[var(--fg-1)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)] disabled:opacity-60"
+                  >
+                    Import backup
+                  </button>
+                </div>
+                <p className="text-[12px] text-[var(--fg-3)]">
+                  Import replaces current local cached folders, labels, messages,
+                  and sync state.
+                </p>
+                {backupMessage && (
+                  <p className="text-[12px] text-[var(--fg-2)]">{backupMessage}</p>
+                )}
               </div>
             </SettingsSection>
           </div>
@@ -1260,7 +1502,7 @@ export function SettingsModal({
                         Add Email
                       </h4>
                       <p className="mt-1 text-sm  text-[var(--fg-2)]">
-                        Connect Outlook, Gmail, or another provider with OAuth2.
+                        Connect Outlook, Gmail, or a private IMAP mailbox.
                       </p>
                     </div>
                     <button
@@ -1279,10 +1521,10 @@ export function SettingsModal({
                         setHasStartedMicrosoftConnect(true);
                         onConnectMicrosoft();
                       }}
-                      disabled={isConnectingMicrosoft || isConnectingGoogle}
+                      disabled={isConnectingMicrosoft || isConnectingGoogle || isConnectingImap}
                       className={cn(
                         "flex w-full items-center justify-center gap-2 rounded-[var(--radius-ryze-sm)] border px-3 py-2.5 text-sm  transition-colors",
-                        isConnectingMicrosoft || isConnectingGoogle
+                        isConnectingMicrosoft || isConnectingGoogle || isConnectingImap
                           ? "cursor-not-allowed border-[var(--border-subtle)] bg-[var(--bg-1)] text-[var(--fg-3)]"
                           : "border-[var(--border-0)] bg-[var(--bg-0)] text-[var(--fg-1)] hover:border-[var(--ryze-accent)]",
                       )}
@@ -1297,10 +1539,10 @@ export function SettingsModal({
                         setHasStartedGoogleConnect(true);
                         onConnectGoogle();
                       }}
-                      disabled={isConnectingGoogle || isConnectingMicrosoft}
+                      disabled={isConnectingGoogle || isConnectingMicrosoft || isConnectingImap}
                       className={cn(
                         "flex w-full items-center justify-center gap-2 rounded-[var(--radius-ryze-sm)] border px-3 py-2.5 text-sm  transition-colors",
-                        isConnectingGoogle || isConnectingMicrosoft
+                        isConnectingGoogle || isConnectingMicrosoft || isConnectingImap
                           ? "cursor-not-allowed border-[var(--border-subtle)] bg-[var(--bg-1)] text-[var(--fg-3)]"
                           : "border-[var(--border-0)] bg-[var(--bg-0)] text-[var(--fg-1)] hover:border-[var(--ryze-accent)]",
                       )}
@@ -1308,7 +1550,132 @@ export function SettingsModal({
                       <Mail size={14} />
                       {isConnectingGoogle ? "Connecting..." : "Sign in with Google"}
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsImapFormOpen((value) => !value)}
+                      disabled={isConnectingGoogle || isConnectingMicrosoft || isConnectingImap}
+                      className={cn(
+                        "flex w-full items-center justify-center gap-2 rounded-[var(--radius-ryze-sm)] border px-3 py-2.5 text-sm transition-colors",
+                        isConnectingGoogle || isConnectingMicrosoft || isConnectingImap
+                          ? "cursor-not-allowed border-[var(--border-subtle)] bg-[var(--bg-1)] text-[var(--fg-3)]"
+                          : "border-[var(--border-0)] bg-[var(--bg-0)] text-[var(--fg-1)] hover:border-[var(--ryze-accent)]",
+                      )}
+                    >
+                      <Mail size={14} />
+                      Connect with IMAP
+                    </button>
                   </div>
+
+                  {isImapFormOpen && (
+                    <div className="mt-4 space-y-3 rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-1)] p-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="email"
+                          value={imapDraft.email}
+                          onChange={(event) =>
+                            setImapDraft((prev) => ({
+                              ...prev,
+                              email: event.target.value,
+                              username: prev.username || event.target.value,
+                            }))
+                          }
+                          placeholder="Email"
+                          className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-2)] px-3 py-2 text-sm text-[var(--fg-1)] outline-none focus:border-[var(--ryze-accent)]"
+                        />
+                        <input
+                          type="text"
+                          value={imapDraft.displayName}
+                          onChange={(event) =>
+                            setImapDraft((prev) => ({
+                              ...prev,
+                              displayName: event.target.value,
+                            }))
+                          }
+                          placeholder="Display name"
+                          className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-2)] px-3 py-2 text-sm text-[var(--fg-1)] outline-none focus:border-[var(--ryze-accent)]"
+                        />
+                      </div>
+                      <div className="grid grid-cols-[minmax(0,1fr)_80px] gap-2">
+                        <input
+                          type="text"
+                          value={imapDraft.host}
+                          onChange={(event) =>
+                            setImapDraft((prev) => ({
+                              ...prev,
+                              host: event.target.value,
+                            }))
+                          }
+                          placeholder="imap.example.com"
+                          className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-2)] px-3 py-2 text-sm text-[var(--fg-1)] outline-none focus:border-[var(--ryze-accent)]"
+                        />
+                        <input
+                          type="number"
+                          value={imapDraft.port}
+                          onChange={(event) =>
+                            setImapDraft((prev) => ({
+                              ...prev,
+                              port: Number(event.target.value),
+                            }))
+                          }
+                          className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-2)] px-3 py-2 text-sm text-[var(--fg-1)] outline-none focus:border-[var(--ryze-accent)]"
+                        />
+                      </div>
+                      <input
+                        type="text"
+                        value={imapDraft.username}
+                        onChange={(event) =>
+                          setImapDraft((prev) => ({
+                            ...prev,
+                            username: event.target.value,
+                          }))
+                        }
+                        placeholder="Username"
+                        className="w-full rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-2)] px-3 py-2 text-sm text-[var(--fg-1)] outline-none focus:border-[var(--ryze-accent)]"
+                      />
+                      <input
+                        type="password"
+                        value={imapDraft.password}
+                        onChange={(event) =>
+                          setImapDraft((prev) => ({
+                            ...prev,
+                            password: event.target.value,
+                          }))
+                        }
+                        placeholder="App password"
+                        className="w-full rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] bg-[var(--bg-2)] px-3 py-2 text-sm text-[var(--fg-1)] outline-none focus:border-[var(--ryze-accent)]"
+                      />
+                      <label className="flex items-center gap-2 text-xs text-[var(--fg-2)]">
+                        <input
+                          type="checkbox"
+                          checked={imapDraft.secure}
+                          onChange={(event) =>
+                            setImapDraft((prev) => ({
+                              ...prev,
+                              secure: event.target.checked,
+                              port: event.target.checked ? 993 : 143,
+                            }))
+                          }
+                        />
+                        Use TLS
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHasStartedImapConnect(true);
+                          onConnectImap(imapDraft);
+                        }}
+                        disabled={isConnectingImap}
+                        className="w-full rounded-[var(--radius-ryze-sm)] bg-[var(--ryze-accent)] px-3 py-2 text-sm font-medium text-[var(--ryze-accent-fg)] transition-colors hover:bg-[var(--ryze-accent-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isConnectingImap ? "Saving..." : "Save IMAP account"}
+                      </button>
+                      <p className="text-[11px] leading-relaxed text-[var(--fg-3)]">
+                        Passwords are encrypted locally with the OS keychain.
+                        Live IMAP sync is the next setup step.
+                      </p>
+                    </div>
+                  )}
 
                   {connectMicrosoftError && (
                     <p className="mt-3 text-xs  text-[var(--danger-token)]">
@@ -1318,6 +1685,11 @@ export function SettingsModal({
                   {connectGoogleError && (
                     <p className="mt-3 text-xs  text-[var(--danger-token)]">
                       {connectGoogleError}
+                    </p>
+                  )}
+                  {connectImapError && (
+                    <p className="mt-3 text-xs text-[var(--danger-token)]">
+                      {connectImapError}
                     </p>
                   )}
                 </motion.div>

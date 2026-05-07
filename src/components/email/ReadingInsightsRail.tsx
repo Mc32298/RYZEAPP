@@ -1,7 +1,12 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Clock3, Sparkles } from "lucide-react";
+import { Clock3, RefreshCw, Reply, Sparkles } from "lucide-react";
+import type { ReactNode } from "react";
 import type { EmailThread } from "@/types/email";
-import type { AiTone, ReadingInsightModel } from "./readingInsights";
+import type {
+  AiTone,
+  ContactContextModel,
+  ReadingInsightModel,
+} from "./readingInsights";
 
 interface ReadingInsightsRailProps {
   isCollapsed: boolean;
@@ -12,9 +17,10 @@ interface ReadingInsightsRailProps {
   aiError: string;
   isAiSummarizing: boolean;
   insights: ReadingInsightModel;
+  contactContext: ContactContextModel | null;
   onSummarize: () => void;
   onToneSelect: (tone: AiTone) => void;
-  onNextAction: () => void;
+  onNextAction: (actionId: "reply" | "remind_3d" | "remind_7d") => void;
 }
 
 const toneLabels: Record<AiTone, string> = {
@@ -31,6 +37,14 @@ const RAIL_TRANSITION = {
   ease: [0.22, 1, 0.36, 1] as const,
 };
 
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <h2 className="font-mono-jetbrains text-[10px] uppercase tracking-[0.08em] text-[var(--fg-3)]">
+      {children}
+    </h2>
+  );
+}
+
 export function ReadingInsightsRail({
   isCollapsed,
   email,
@@ -40,6 +54,7 @@ export function ReadingInsightsRail({
   aiError,
   isAiSummarizing,
   insights,
+  contactContext,
   onSummarize,
   onToneSelect,
   onNextAction,
@@ -47,10 +62,30 @@ export function ReadingInsightsRail({
   const summaryText = aiSummary || insights.summaryFallback;
   const keyPoints =
     aiKeyPoints.length > 0 ? aiKeyPoints : insights.primaryPanel.items;
+  const visibleSignals = keyPoints.slice(0, 2);
   const suggestedActions =
     aiSuggestedActions.length > 0
       ? aiSuggestedActions
-      : [insights.nextAction.label, ...insights.reminderOptions.slice(0, 2)];
+      : [
+          ...insights.actionItems.slice(0, 3),
+          insights.nextAction.label,
+        ].slice(0, 4);
+  const actionButtons: Array<{
+    id: "reply" | "remind_3d" | "remind_7d";
+    label: string;
+    icon: typeof Reply;
+    tone: "primary" | "secondary";
+  }> = [
+    { id: "reply", label: "Draft reply", icon: Reply, tone: "primary" },
+    { id: "remind_3d", label: "3 days", icon: Clock3, tone: "secondary" },
+  ];
+  const contextBadges = contactContext
+    ? [
+        `Trust: ${contactContext.trustStatus}`,
+        contactContext.relationshipStrength,
+        ...(contactContext.knownLabels[0] ? [contactContext.knownLabels[0]] : []),
+      ]
+    : [];
 
   return (
     <motion.aside
@@ -72,103 +107,137 @@ export function ReadingInsightsRail({
             }}
             className="flex h-full min-w-[320px] flex-col px-4 py-4"
           >
-            <div className="border-b border-[var(--border-subtle)] pb-4">
-              <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="border-b border-[var(--border-subtle)] pb-3">
+              <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-[var(--fg-0)]">
                   <Sparkles size={14} className="text-[var(--ryze-accent)]" />
-                  <p className="text-[14px] font-semibold">AI summary</p>
+                  <p className="text-[13px] font-semibold">Insights</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="rounded-[4px] border border-[var(--ryze-accent)] px-2 py-1 font-mono-jetbrains text-[10px] text-[var(--ryze-accent)]">
-                    on-device
-                  </span>
-                  <button
-                    type="button"
-                    onClick={onSummarize}
-                    className="rounded-[4px] border border-[var(--border-0)] px-2 py-1 font-mono-jetbrains text-[10px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
-                  >
-                    refresh
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={onSummarize}
+                  title="Refresh summary"
+                  className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[var(--fg-3)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
+                >
+                  <RefreshCw size={13} />
+                </button>
               </div>
-              <p className="font-mono-jetbrains text-[10.5px] text-[var(--fg-3)]">
-                {email.threadCount || 1} messages ·{" "}
-                {isAiSummarizing ? "working..." : "1.8s"} · local key
-              </p>
+              <div className="mt-2 flex items-center gap-2 font-mono-jetbrains text-[10px] text-[var(--fg-3)]">
+                <span>{email.threadCount || 1} msg</span>
+                <span>local</span>
+                <span>{isAiSummarizing ? "working" : "ready"}</span>
+              </div>
             </div>
 
-            <div className="flex-1 space-y-3 overflow-y-auto pt-4">
-              <section>
-                <p className="text-[13px] leading-7 text-[var(--fg-1)]">
+            <div className="flex-1 space-y-4 overflow-y-auto pt-4">
+              <section className="space-y-3">
+                <p className="text-[13px] leading-6 text-[var(--fg-1)]">
                   {aiError
                     ? "Summary unavailable. Local insight cards are still active."
                     : summaryText}
                 </p>
+                <div className="grid grid-cols-1 gap-2">
+                  {actionButtons.map((action) => {
+                    const Icon = action.icon;
+                    return (
+                      <button
+                        key={action.id}
+                        type="button"
+                        onClick={() => onNextAction(action.id)}
+                        className={
+                          action.tone === "primary"
+                            ? "flex items-center gap-2 rounded-[6px] border border-[var(--ryze-accent)] bg-[var(--ryze-accent-soft)] px-3 py-2 text-left text-[12px] font-medium text-[var(--ryze-accent)] transition-colors hover:bg-[var(--bg-2)]"
+                            : "flex items-center gap-2 rounded-[6px] border border-[var(--border-subtle)] px-3 py-2 text-left text-[12px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
+                        }
+                      >
+                        <Icon size={13} />
+                        {action.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </section>
 
               <section className="border-t border-[var(--border-subtle)] pt-4">
-                <h2 className="mb-3 font-mono-jetbrains text-[10px] uppercase tracking-[0.08em] text-[var(--fg-3)]">
-                  Key points
-                </h2>
-                <div className="space-y-2.5">
-                  {keyPoints.map((item) => (
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <SectionLabel>Signals</SectionLabel>
+                  <button
+                    type="button"
+                    onClick={() => onNextAction("remind_7d")}
+                    className="font-mono-jetbrains text-[10px] text-[var(--fg-3)] transition-colors hover:text-[var(--fg-1)]"
+                  >
+                    next week
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {visibleSignals.map((item) => (
                     <p
                       key={item}
-                      className="text-[13px] leading-relaxed text-[var(--fg-1)]"
+                      className="rounded-[6px] border border-[var(--border-subtle)] px-2.5 py-2 text-[12px] leading-relaxed text-[var(--fg-2)]"
                     >
-                      <span className="mr-2 text-[var(--ryze-accent)]">-</span>
                       {item}
                     </p>
                   ))}
-                </div>
-              </section>
-
-              <section className="border-t border-[var(--border-subtle)] pt-4">
-                <h2 className="mb-3 font-mono-jetbrains text-[10px] uppercase tracking-[0.08em] text-[var(--fg-3)]">
-                  Suggested actions
-                </h2>
-                <div className="space-y-2">
                   {suggestedActions.map((item) => (
-                    <button
+                    <div
                       key={item}
-                      type="button"
-                      onClick={onNextAction}
-                      className="flex w-full items-start gap-3 rounded-[6px] border border-[var(--border-subtle)] px-3 py-3 text-left text-[13px] text-[var(--fg-1)] transition-colors hover:border-[var(--border-1)] hover:bg-[var(--bg-2)]"
+                      className="rounded-[6px] border border-transparent px-2.5 py-1 text-[12px] leading-relaxed text-[var(--fg-3)]"
                     >
-                      <span className="mt-0.5 h-4 w-4 rounded-[4px] border border-[var(--border-1)]" />
-                      <span>{item}</span>
-                    </button>
+                      {item}
+                    </div>
                   ))}
                 </div>
               </section>
 
               <section className="border-t border-[var(--border-subtle)] pt-4">
-                <div className="mb-3 flex items-center gap-2 text-[var(--fg-3)]">
-                  <Clock3
-                    size={13}
-                    className="text-[var(--ryze-accent)]"
-                  />
-                  <h2 className="font-mono-jetbrains text-[10px] uppercase tracking-[0.08em]">
-                    Tone
-                  </h2>
+                <div className="mb-2 flex items-center gap-2 text-[var(--fg-3)]">
+                  <Clock3 size={13} className="text-[var(--ryze-accent)]" />
+                  <SectionLabel>Tone</SectionLabel>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="grid grid-cols-3 gap-1.5">
                   {insights.toneOptions.map((tone) => (
                     <button
                       key={tone}
                       type="button"
                       onClick={() => onToneSelect(tone)}
-                      className="rounded-[6px] border border-[var(--border-subtle)] px-2.5 py-1.5 text-[11px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
+                      className="rounded-[5px] border border-[var(--border-subtle)] px-2 py-1.5 text-[10.5px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
                     >
                       {toneLabels[tone]}
                     </button>
                   ))}
                 </div>
               </section>
+              {contactContext && (
+                <section className="border-t border-[var(--border-subtle)] pt-4">
+                  <SectionLabel>Contact</SectionLabel>
+                  <div className="mt-3 space-y-2 text-[12px] text-[var(--fg-2)]">
+                    <div className="flex flex-wrap gap-1.5">
+                      {contextBadges.map((badge) => (
+                        <span
+                          key={badge}
+                          className="rounded-[4px] border border-[var(--border-0)] px-2 py-1 font-mono-jetbrains text-[10px] text-[var(--fg-2)]"
+                        >
+                          {badge}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="leading-relaxed">
+                      {contactContext.accountHistorySummary}
+                    </p>
+                    <p className="leading-relaxed">
+                      {contactContext.lastReplySummary}
+                    </p>
+                    {contactContext.recentThreadSubjects[0] && (
+                      <p className="truncate text-[var(--fg-3)]">
+                        {contactContext.recentThreadSubjects[0]}
+                      </p>
+                    )}
+                  </div>
+                </section>
+              )}
 
-              <div className="rounded-[6px] border border-[var(--border-subtle)] bg-[var(--bg-2)] px-3 py-3 font-mono-jetbrains text-[10.5px] leading-relaxed text-[var(--fg-2)]">
-                Summary generated locally. Thread contents stay on this device
-                except when you explicitly trigger an external provider.
+              <div className="border-t border-[var(--border-subtle)] pt-3 font-mono-jetbrains text-[10px] text-[var(--fg-3)]">
+                Local by default
               </div>
             </div>
           </motion.div>

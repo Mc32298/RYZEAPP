@@ -16,10 +16,15 @@ import { EmailThread, EmailLabel } from "@/types/email";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import DOMPurify from "dompurify";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { ConversationMessageCard } from "./ConversationMessageCard";
 import { ReadingInsightsRail } from "./ReadingInsightsRail";
-import { deriveReadingInsights, type AiTone } from "./readingInsights";
+import {
+  deriveContactContext,
+  deriveReadingInsights,
+  type AiTone,
+} from "./readingInsights";
+import { classifySmartCategory } from "./smartCategories";
 import {
   loadStoredInsightsCollapsed,
   saveStoredInsightsCollapsed,
@@ -34,6 +39,13 @@ import {
   renderThreadMessageHtml,
 } from "./threadMessageRendering";
 import { getInlineReplyTargetMessage } from "./replyComposer";
+import {
+  defaultSenderTrustPolicy,
+  getSenderPolicy,
+  loadSenderTrustPolicies,
+  saveSenderTrustPolicies,
+  updateSenderPolicy,
+} from "./senderTrust";
 
 interface ReadingPaneProps {
   email: EmailThread | null;
@@ -59,12 +71,14 @@ interface ReadingPaneProps {
   onToggleLabel: (email: EmailThread, label: EmailLabel) => void;
   onToggleStar: (id: string) => void;
   onMarkUnread: (id: string) => void;
+  onSnooze: (id: string, snoozedUntil?: string) => void;
   onDownloadAttachment: (
     messageId: string,
     attachmentId: string,
     filename: string,
   ) => void;
   isDarkMode: boolean;
+  aiSummaryRequestToken?: number;
 }
 
 const SAFE_URL_PROTOCOLS = new Set([
@@ -185,6 +199,7 @@ function saveTrustedImageSenders(senders: string[]) {
     TRUSTED_SENDERS_STORAGE_KEY,
     JSON.stringify(senders),
   );
+  window.dispatchEvent(new Event("ryze-sender-trust-updated"));
 }
 
 function makeRemoteImagePlaceholder(doc: Document) {
@@ -364,7 +379,9 @@ export function ReadingPane({
   onToggleLabel,
   onToggleStar,
   onMarkUnread,
+  onSnooze,
   isDarkMode,
+  aiSummaryRequestToken = 0,
 }: ReadingPaneProps) {
   const [loadRemoteImagesForThisEmail, setLoadRemoteImagesForThisEmail] =
     useState(false);
@@ -373,6 +390,7 @@ export function ReadingPane({
   );
   const [isLabelMenuOpen, setIsLabelMenuOpen] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const [senderPolicies, setSenderPolicies] = useState(loadSenderTrustPolicies);
   const [aiSummary, setAiSummary] = useState("");
   const [aiKeyPoints, setAiKeyPoints] = useState<string[]>([]);
   const [aiSuggestedActions, setAiSuggestedActions] = useState<string[]>([]);
@@ -397,8 +415,11 @@ export function ReadingPane({
   const shouldAutoScrollRef = useRef(false);
 
   const senderEmail = normalizeEmailAddress(email?.sender.email || "");
+  const senderPolicy = senderEmail
+    ? getSenderPolicy(senderPolicies, senderEmail)
+    : defaultSenderTrustPolicy();
   const isTrustedSender = senderEmail
-    ? trustedImageSenders.includes(senderEmail)
+    ? trustedImageSenders.includes(senderEmail) || senderPolicy.trustImages
     : false;
   const conversationMessages =
     threadMessages.length > 0 ? threadMessages : email ? [email] : [];
@@ -416,6 +437,25 @@ export function ReadingPane({
     });
 
     setLoadRemoteImagesForThisEmail(true);
+
+    setSenderPolicies((prev) => {
+      const next = updateSenderPolicy(prev, senderEmail, {
+        trustImages: true,
+        markedSafe: true,
+      });
+      saveSenderTrustPolicies(next);
+      return next;
+    });
+  };
+
+  const handleSenderPolicyUpdate = (update: Parameters<typeof updateSenderPolicy>[2]) => {
+    if (!senderEmail) return;
+    setSenderPolicies((prev) => {
+      const next = updateSenderPolicy(prev, senderEmail, update);
+      saveSenderTrustPolicies(next);
+      window.dispatchEvent(new Event("ryze-sender-trust-updated"));
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -520,7 +560,7 @@ export function ReadingPane({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const handleAiSummarize = async () => {
+  const handleAiSummarize = useCallback(async () => {
     const summaryEmail =
       (threadMessages.find((item) => item.id === activeMessageId) || email) ??
       null;
@@ -554,7 +594,40 @@ export function ReadingPane({
     } finally {
       setIsAiSummarizing(false);
     }
-  };
+  }, [threadMessages, activeMessageId, email]);
+
+  const handleInsightAction = useCallback(
+    (actionId: "reply" | "remind_3d" | "remind_7d") => {
+      const targetMessage =
+        (threadMessages.find((message) => message.id === activeMessageId) || email) ??
+        null;
+      if (!targetMessage) return;
+
+      if (actionId === "remind_3d") {
+        const remindAt = new Date();
+        remindAt.setDate(remindAt.getDate() + 3);
+        remindAt.setHours(8, 0, 0, 0);
+        onSnooze(targetMessage.id, remindAt.toISOString());
+        return;
+      }
+
+      if (actionId === "remind_7d") {
+        const remindAt = new Date();
+        remindAt.setDate(remindAt.getDate() + 7);
+        remindAt.setHours(8, 0, 0, 0);
+        onSnooze(targetMessage.id, remindAt.toISOString());
+        return;
+      }
+
+      onReply(targetMessage);
+    },
+    [activeMessageId, email, onReply, onSnooze, threadMessages],
+  );
+
+  useEffect(() => {
+    if (!aiSummaryRequestToken) return;
+    void handleAiSummarize();
+  }, [aiSummaryRequestToken, handleAiSummarize]);
 
   if (!email) {
     return (
@@ -580,13 +653,22 @@ export function ReadingPane({
     blockRemoteImages && !loadRemoteImagesForThisEmail && !isTrustedSender;
   const activeMessage =
     conversationMessages.find((item) => item.id === activeMessageId) || email;
+  const smartCategory = classifySmartCategory(activeMessage);
   const inlineReplyTargetMessage = getInlineReplyTargetMessage(
     activeMessage,
     conversationMessages,
     currentUserEmail,
   );
   const derivedInsights = activeMessage
-    ? deriveReadingInsights(activeMessage, conversationMessages)
+    ? deriveReadingInsights(activeMessage, relatedEmails)
+    : null;
+  const contactContext = activeMessage
+    ? deriveContactContext(
+        activeMessage,
+        relatedEmails,
+        currentUserEmail,
+        isTrustedSender,
+      )
     : null;
   const inlineCue = derivedInsights?.inlineCue || null;
 
@@ -703,40 +785,83 @@ export function ReadingPane({
               onClick={() => setIsAiInsightsCollapsed((prev) => !prev)}
               isActive={!isAiInsightsCollapsed}
             />
-            <button
-              onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
-              className={cn(
-                "rounded-sm border p-1.5 transition-all duration-150",
-                isMoreMenuOpen
-                  ? "border-[var(--ryze-accent)] bg-[var(--ryze-accent-soft)] text-[var(--ryze-accent)]"
-                  : "border-transparent text-[var(--fg-3)] hover:bg-[var(--bg-2)] hover:text-[var(--fg-1)]",
-              )}
-            >
-              <MoreHorizontal size={15} strokeWidth={1.5} />
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
+                className={cn(
+                  "rounded-sm border p-1.5 transition-all duration-150",
+                  isMoreMenuOpen
+                    ? "border-[var(--ryze-accent)] bg-[var(--ryze-accent-soft)] text-[var(--ryze-accent)]"
+                    : "border-transparent text-[var(--fg-3)] hover:bg-[var(--bg-2)] hover:text-[var(--fg-1)]",
+                )}
+              >
+                <MoreHorizontal size={15} strokeWidth={1.5} />
+              </button>
 
-            {isMoreMenuOpen && (
-              <div className="absolute right-0 top-full z-50 mt-1 w-40 rounded-[var(--radius-ryze-lg)] border border-[var(--border-1)] bg-[var(--bg-2)] p-1 shadow-[0_16px_48px_-12px_oklch(0_0_0_/_0.6)]">
-                <button
-                  onClick={() => {
-                    setIsMoreMenuOpen(false);
-                    onMarkUnread(email.id);
-                  }}
-                  className="flex w-full items-center px-2.5 py-2 text-left text-[12px] text-[var(--fg-2)] hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
-                >
-                  Mark as unread
-                </button>
-                <button
-                  onClick={() => {
-                    setIsMoreMenuOpen(false);
-                    window.print();
-                  }}
-                  className="flex w-full items-center px-2.5 py-2 text-left text-[12px] text-[var(--fg-2)] hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
-                >
-                  Print message
-                </button>
-              </div>
-            )}
+              {isMoreMenuOpen && (
+                <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-[var(--radius-ryze-lg)] border border-[var(--border-1)] bg-[var(--bg-2)] p-1 shadow-[0_16px_48px_-12px_oklch(0_0_0_/_0.6)]">
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      onMarkUnread(email.id);
+                    }}
+                    className="flex w-full items-center px-2.5 py-2 text-left text-[12px] text-[var(--fg-2)] hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
+                  >
+                    Mark as unread
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      window.print();
+                    }}
+                    className="flex w-full items-center px-2.5 py-2 text-left text-[12px] text-[var(--fg-2)] hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
+                  >
+                    Print message
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      handleSenderPolicyUpdate({ alwaysConfirmLinks: !senderPolicy.alwaysConfirmLinks });
+                    }}
+                    className="flex w-full items-center px-2.5 py-2 text-left text-[12px] text-[var(--fg-2)] hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
+                  >
+                    {senderPolicy.alwaysConfirmLinks ? "Disable forced link confirmation" : "Always confirm links"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      handleSenderPolicyUpdate({ muted: !senderPolicy.muted, blocked: false });
+                    }}
+                    className="flex w-full items-center px-2.5 py-2 text-left text-[12px] text-[var(--fg-2)] hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
+                  >
+                    {senderPolicy.muted ? "Unmute sender" : "Mute sender"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      handleSenderPolicyUpdate({ blocked: !senderPolicy.blocked, muted: false });
+                    }}
+                    className="flex w-full items-center px-2.5 py-2 text-left text-[12px] text-[var(--danger-token)] hover:bg-[var(--bg-3)]"
+                  >
+                    {senderPolicy.blocked ? "Unblock sender" : "Block sender"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      handleSenderPolicyUpdate({
+                        markedSafe: true,
+                        blocked: false,
+                        muted: false,
+                        alwaysConfirmLinks: false,
+                      });
+                    }}
+                    className="flex w-full items-center px-2.5 py-2 text-left text-[12px] text-[var(--fg-2)] hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
+                  >
+                    Mark as safe
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -744,6 +869,11 @@ export function ReadingPane({
           <h1 className="text-[22px] font-semibold leading-tight tracking-normal text-[var(--fg-0)]">
             {email.subject}
           </h1>
+          <div className="mt-2">
+            <span className="rounded-[var(--radius-ryze-xs)] border border-[var(--border-0)] bg-[var(--bg-1)] px-2 py-0.5 font-mono-jetbrains text-[10px] text-[var(--fg-2)]">
+              Category: {smartCategory}
+            </span>
+          </div>
           {email.labels.length > 0 && (
             <div
               className={cn(
@@ -821,6 +951,7 @@ export function ReadingPane({
                         saveTrustedImageSenders(next);
                         return next;
                       });
+                      handleSenderPolicyUpdate({ trustImages: false });
                       setLoadRemoteImagesForThisEmail(false);
                     }}
                     className="rounded-[var(--radius-ryze-sm)] border border-[var(--border-0)] px-3 py-1.5 text-[12px] font-medium text-[var(--fg-1)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
@@ -995,9 +1126,10 @@ export function ReadingPane({
               aiError={aiError}
               isAiSummarizing={isAiSummarizing}
               insights={derivedInsights}
+              contactContext={contactContext}
               onSummarize={handleAiSummarize}
               onToneSelect={(tone) => onReplyWithTone(tone)}
-              onNextAction={() => onReply(activeMessage)}
+              onNextAction={handleInsightAction}
             />
           )}
         </div>

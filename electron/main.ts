@@ -15,6 +15,7 @@
 import { autoUpdater } from "electron-updater";
 import * as electron from "electron";
 import { config as loadDotenv } from "dotenv";
+import { ImapFlow } from "imapflow";
 import * as path from "path";
 import * as fs from "fs";
 import http from "http"; // Used for the local OAuth callback server
@@ -22,6 +23,19 @@ import { resolveMarkReadValue } from "./mailReadState";
 import { buildGraphReplyPayload } from "./mailReplyPayload";
 import { isValidAccountId } from "./accountId";
 import { buildGmailMoveLabelMutation } from "./gmailMove";
+import { deriveSyncHealth, deriveTokenHealth } from "./accountHealth";
+import {
+  buildImapAccountId,
+  validateImapConnectionConfig,
+  type ImapConnectionConfig,
+} from "./imapConfig";
+import {
+  buildImapFolderRows,
+  mapImapMessageToLocalMessage,
+  normalizeImapMailboxPath,
+  type LocalImapFolderRow,
+  type LocalImapMessageRow,
+} from "./imapSync";
 import {
   buildGoogleAuthorizationCodeParams,
   buildGoogleTokenExchangeDebugContext,
@@ -209,6 +223,12 @@ const aiProviderKeysFilePath = path.join(
   "ai-provider-keys.json",
 );
 
+/** Stores encrypted IMAP connection settings and app passwords */
+const imapAccountsFilePath = path.join(
+  app.getPath("userData"),
+  "imap-accounts.json",
+);
+
 // =============================================================================
 // TYPES & INTERFACES
 // =============================================================================
@@ -277,6 +297,37 @@ interface GoogleStoredToken {
   tokenType: string;
   clientId?: string;
   oauthScope?: string;
+}
+
+interface StoredImapAccount extends ImapConnectionConfig {
+  accountId: string;
+  provider: "imap";
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AccountHealthSnapshot {
+  accountId: string;
+  provider: "microsoft" | "google" | "imap";
+  syncStatus: "ok" | "warning" | "idle";
+  tokenStatus: "ok" | "expiring" | "expired" | "n/a";
+  tokenExpiresAt: string | null;
+  lastSyncAt: string | null;
+  folderErrors: number;
+  storageBytes: number;
+}
+
+interface BackupEnvelope {
+  version: 1;
+  createdAt: string;
+  data: {
+    settings: ReturnType<typeof loadBackendSettings>;
+    folders: any[];
+    emails: any[];
+    labels: any[];
+    emailLabels: any[];
+    folderSyncState: any[];
+  };
 }
 
 interface GmailMessageHeader {
@@ -1045,6 +1096,29 @@ function validateAiEmailPayload(payload: any) {
   };
 }
 
+function validateAiReplyPayload(payload: any) {
+  return {
+    ...validateAiEmailPayload(payload),
+    tone: optionalString(payload?.tone, "tone", 32).toLowerCase(),
+  };
+}
+
+function normalizeAiReplyResult(rawText: string) {
+  const jsonText = extractJsonObject(rawText);
+
+  if (jsonText) {
+    try {
+      const parsed = JSON.parse(jsonText) as { reply?: unknown };
+      const reply = typeof parsed.reply === "string" ? parsed.reply.trim() : "";
+      if (reply) return reply;
+    } catch {
+      // Fall back to plain text extraction.
+    }
+  }
+
+  return rawText.trim();
+}
+
 function sanitizeBackendSettings(settings: unknown) {
   const value = settings && typeof settings === "object" ? settings as Record<string, unknown> : {};
   const aiProvider = optionalString(value.aiProvider, "aiProvider", 32).trim();
@@ -1079,6 +1153,9 @@ function sanitizeDraftsPayload(drafts: unknown) {
       ),
       isMinimized: Boolean(value.isMinimized),
       isFullscreen: Boolean(value.isFullscreen),
+      scheduledSendAt:
+        optionalString(value.scheduledSendAt, `drafts[${index}].scheduledSendAt`, 64) ||
+        undefined,
       aiTone: optionalString(value.aiTone, `drafts[${index}].aiTone`, 32) || undefined,
       aiHint: optionalString(value.aiHint, `drafts[${index}].aiHint`, 2048) || undefined,
     };
@@ -1556,6 +1633,209 @@ function saveGoogleTokens(tokens: Record<string, GoogleStoredToken>) {
   } catch (error) {
     console.error("Failed to save Google tokens:", error);
     throw error;
+  }
+}
+
+// =============================================================================
+// IMAP ACCOUNT STORAGE
+// =============================================================================
+
+function loadImapAccounts(): Record<string, StoredImapAccount> {
+  try {
+    if (!fs.existsSync(imapAccountsFilePath)) return {};
+    const fileContents = fs.readFileSync(imapAccountsFilePath, "utf8");
+    if (!fileContents) return {};
+
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("Secure IMAP account storage is not available on this system");
+    }
+
+    const decoded = safeStorage.decryptString(Buffer.from(fileContents, "base64"));
+    return JSON.parse(decoded) as Record<string, StoredImapAccount>;
+  } catch (error) {
+    console.error("Failed to load stored IMAP accounts:", error);
+    return {};
+  }
+}
+
+function saveImapAccounts(accounts: Record<string, StoredImapAccount>) {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("Secure IMAP account storage is not available on this system");
+    }
+
+    const content = safeStorage.encryptString(JSON.stringify(accounts)).toString("base64");
+    fs.writeFileSync(imapAccountsFilePath, content, { encoding: "utf8", mode: 0o600 });
+  } catch (error) {
+    console.error("Failed to save IMAP accounts:", error);
+    throw error;
+  }
+}
+
+function upsertImapSystemFolders(accountId: string) {
+  const folders = [
+    { id: "INBOX", displayName: "Inbox", wellKnownName: "inbox", path: "Inbox" },
+    { id: "Sent", displayName: "Sent", wellKnownName: "sentitems", path: "Sent" },
+    { id: "Drafts", displayName: "Drafts", wellKnownName: "drafts", path: "Drafts" },
+    { id: "Archive", displayName: "Archive", wellKnownName: "archive", path: "Archive" },
+    { id: "Trash", displayName: "Trash", wellKnownName: "deleteditems", path: "Trash" },
+    { id: "Junk", displayName: "Junk", wellKnownName: "junkmail", path: "Junk" },
+  ];
+
+  const statement = db.prepare(`
+    INSERT INTO folders (id, accountId, displayName, parentFolderId, wellKnownName, totalItemCount, unreadItemCount, depth, path)
+    VALUES (@id, @accountId, @displayName, NULL, @wellKnownName, 0, 0, 0, @path)
+    ON CONFLICT(accountId, id) DO UPDATE SET
+      displayName = excluded.displayName,
+      wellKnownName = excluded.wellKnownName,
+      path = excluded.path
+  `);
+
+  db.transaction(() => {
+    for (const folder of folders) {
+      statement.run({ ...folder, accountId });
+    }
+  })();
+}
+
+function upsertImapFolders(rows: LocalImapFolderRow[]) {
+  const statement = db.prepare(`
+    INSERT INTO folders (id, accountId, displayName, parentFolderId, wellKnownName, totalItemCount, unreadItemCount, depth, path)
+    VALUES (@id, @accountId, @displayName, @parentFolderId, @wellKnownName, @totalItemCount, @unreadItemCount, @depth, @path)
+    ON CONFLICT(accountId, id) DO UPDATE SET
+      displayName = excluded.displayName,
+      parentFolderId = excluded.parentFolderId,
+      wellKnownName = excluded.wellKnownName,
+      totalItemCount = excluded.totalItemCount,
+      unreadItemCount = excluded.unreadItemCount,
+      depth = excluded.depth,
+      path = excluded.path
+  `);
+
+  db.transaction(() => {
+    for (const row of rows) {
+      statement.run(row);
+    }
+  })();
+}
+
+function upsertImapMessage(row: LocalImapMessageRow) {
+  db.prepare(`
+    INSERT INTO emails (
+      id, accountId, folder, subject, bodyPreview, bodyContentType, bodyContent,
+      receivedDateTime, isRead, hasAttachments, isStarred, fromName, fromAddress,
+      toRecipients, ccRecipients
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      accountId = excluded.accountId,
+      folder = excluded.folder,
+      subject = excluded.subject,
+      bodyPreview = excluded.bodyPreview,
+      bodyContentType = excluded.bodyContentType,
+      bodyContent = excluded.bodyContent,
+      receivedDateTime = excluded.receivedDateTime,
+      isRead = excluded.isRead,
+      hasAttachments = excluded.hasAttachments,
+      isStarred = excluded.isStarred,
+      fromName = excluded.fromName,
+      fromAddress = excluded.fromAddress,
+      toRecipients = excluded.toRecipients,
+      ccRecipients = excluded.ccRecipients
+  `).run(
+    row.id,
+    row.accountId,
+    row.folder,
+    row.subject,
+    row.bodyPreview,
+    row.bodyContentType,
+    row.bodyContent,
+    row.receivedDateTime,
+    row.isRead,
+    row.hasAttachments,
+    row.isStarred,
+    row.fromName,
+    row.fromAddress,
+    row.toRecipients,
+    row.ccRecipients,
+  );
+}
+
+async function syncImapAccount(accountId: string) {
+  const accounts = loadImapAccounts();
+  const config = accounts[accountId];
+
+  if (!config) {
+    throw new Error("No IMAP account stored for this account.");
+  }
+
+  const client = new ImapFlow({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth: {
+      user: config.username,
+      pass: config.password,
+    },
+    logger: false,
+  });
+
+  try {
+    await client.connect();
+
+    const mailboxes = await client.list();
+    const folderRows = buildImapFolderRows(accountId, mailboxes as any[]);
+    upsertImapFolders(folderRows);
+
+    const inboxFolder =
+      folderRows.find((folder) => folder.wellKnownName === "inbox") ||
+      folderRows.find((folder) => normalizeImapMailboxPath(folder.id).toUpperCase() === "INBOX");
+
+    if (!inboxFolder) {
+      return {
+        folders: getLocalFolders(accountId),
+        messagesByFolder: getLocalMessagesByFolder(accountId),
+        syncedCount: 0,
+      };
+    }
+
+    const mailbox = await client.mailboxOpen(inboxFolder.id, { readOnly: true });
+    const exists = Number(mailbox.exists || 0);
+    const start = Math.max(1, exists - 49);
+    let syncedCount = 0;
+
+    if (exists > 0) {
+      for await (const message of client.fetch(
+        `${start}:*`,
+        {
+          uid: true,
+          envelope: true,
+          flags: true,
+          source: true,
+        },
+        { uid: false },
+      )) {
+        const mapped = mapImapMessageToLocalMessage({
+          accountId,
+          folderId: inboxFolder.id,
+          uid: message.uid,
+          flags: message.flags as Set<string>,
+          envelope: message.envelope as any,
+          source: message.source as Buffer,
+        });
+        upsertImapMessage(mapped);
+        syncedCount += 1;
+      }
+    }
+
+    saveFolderSyncState(accountId, inboxFolder.id, "", "full");
+
+    return {
+      folders: getLocalFolders(accountId),
+      messagesByFolder: getLocalMessagesByFolder(accountId),
+      syncedCount,
+    };
+  } finally {
+    await client.logout().catch(() => undefined);
   }
 }
 
@@ -2891,6 +3171,77 @@ function getLocalLabels(accountId: string) {
     .all(accountId);
 }
 
+function getAccountHealthSnapshots(): AccountHealthSnapshot[] {
+  const microsoftTokens = loadMicrosoftTokens();
+  const googleTokens = loadGoogleTokens();
+  const imapAccounts = loadImapAccounts();
+  const accountIds = new Set<string>([
+    ...Object.keys(microsoftTokens),
+    ...Object.keys(googleTokens),
+    ...Object.keys(imapAccounts),
+  ]);
+
+  const snapshots: AccountHealthSnapshot[] = [];
+
+  for (const accountId of accountIds) {
+    const msToken = microsoftTokens[accountId];
+    const googleToken = googleTokens[accountId];
+    const imap = imapAccounts[accountId];
+    const provider: AccountHealthSnapshot["provider"] = msToken
+      ? "microsoft"
+      : googleToken
+        ? "google"
+        : "imap";
+
+    const expiresAt = msToken?.expiresAt || googleToken?.expiresAt || null;
+    const tokenStatus = deriveTokenHealth(expiresAt);
+
+    const messageStats = db
+      .prepare(
+        `
+      SELECT
+        MAX(receivedDateTime) AS lastSyncAt,
+        COUNT(*) AS messageCount,
+        SUM(LENGTH(COALESCE(bodyContent, '')) + LENGTH(COALESCE(bodyPreview, ''))) AS storageBytes
+      FROM emails
+      WHERE accountId = ?
+    `,
+      )
+      .get(accountId) as
+      | {
+          lastSyncAt?: string | null;
+          messageCount?: number | null;
+          storageBytes?: number | null;
+        }
+      | undefined;
+
+    const folderErrorsRow = db
+      .prepare(
+        `
+      SELECT COUNT(*) AS folderErrors
+      FROM folder_sync_state
+      WHERE accountId = ? AND COALESCE(lastDeltaSyncAt, lastFullSyncAt) IS NULL
+    `,
+      )
+      .get(accountId) as { folderErrors?: number | null } | undefined;
+
+    const hasMessages = Number(messageStats?.messageCount || 0) > 0;
+
+    snapshots.push({
+      accountId,
+      provider,
+      syncStatus: deriveSyncHealth({ hasMessages, tokenHealth: tokenStatus }),
+      tokenStatus,
+      tokenExpiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+      lastSyncAt: messageStats?.lastSyncAt || imap?.updatedAt || null,
+      folderErrors: Number(folderErrorsRow?.folderErrors || 0),
+      storageBytes: Number(messageStats?.storageBytes || 0),
+    });
+  }
+
+  return snapshots;
+}
+
 // =============================================================================
 // MAILBOX SYNC — FULL SYNC TO LOCAL DB
 // =============================================================================
@@ -3270,6 +3621,147 @@ ipcMain.handle("ai:summarize-email", async (_event, payload) => {
   };
 });
 
+ipcMain.handle("ai:generate-reply", async (_event, payload) => {
+  if (!aiRateLimiter.allow()) {
+    throw new Error("Too many AI requests. Please wait a moment before generating another reply.");
+  }
+
+  const input = validateAiReplyPayload(payload);
+  const plainBody = limitAiInput(
+    stripHtmlForAi(input.body || input.preview || ""),
+  );
+
+  if (!plainBody.trim() && !input.subject.trim()) {
+    throw new Error("No email content available to generate a reply.");
+  }
+
+  const toneInstruction = {
+    short: "Keep it concise: 2-4 short sentences.",
+    polite: "Use warm, respectful language and appreciation.",
+    firm: "Be clear, direct, and set expectations confidently.",
+    detailed: "Provide full context and complete answers.",
+    decline: "Politely decline while keeping relationship positive.",
+    "follow-up": "Nudge for response and restate pending question.",
+  }[input.tone] || "Use a professional and clear tone.";
+
+  const prompt = [
+    "You are RYZE AI, a private desktop email assistant.",
+    "Write a reply draft the user can send.",
+    "",
+    "Return only valid JSON with this exact shape:",
+    '{"reply":"reply body text only"}',
+    "",
+    "Rules:",
+    `- ${toneInstruction}`,
+    "- Do not invent facts, dates, or commitments not present in the email.",
+    "- Keep the draft practical and action-oriented.",
+    "- Do not include a subject line.",
+    "- Do not include signatures.",
+    "",
+    `From: ${input.senderName} <${input.senderEmail}>`,
+    `Subject: ${input.subject}`,
+    "",
+    "Email content:",
+    plainBody,
+  ].join("\n");
+
+  if (getAiProvider() === "ollama") {
+    const { baseUrl, model } = getOllamaConfig();
+    const response = await fetch(`${baseUrl}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        prompt,
+        stream: false,
+        options: {
+          temperature: 0.25,
+          num_predict: 600,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Ollama reply generation failed (${response.status}): ${errorText}`);
+    }
+
+    const data = (await response.json()) as {
+      response?: string;
+      message?: { content?: string };
+      output?: string;
+    };
+
+    const rawReply = (
+      data.response ||
+      data.message?.content ||
+      data.output ||
+      ""
+    ).trim();
+
+    if (!rawReply) {
+      throw new Error("Ollama returned an empty reply draft.");
+    }
+
+    return { reply: normalizeAiReplyResult(rawReply) };
+  }
+
+  const apiKey = getGeminiApiKey();
+  const model = getGeminiModel();
+  const apiVersion = getGeminiApiVersion();
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/${encodeURIComponent(
+      apiVersion,
+    )}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(
+      apiKey,
+    )}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.25,
+          maxOutputTokens: 700,
+        },
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    if (response.status === 400 && errorText.includes("API_KEY")) {
+      throw new Error("Gemini API key is invalid or missing.");
+    }
+    throw new Error(`Gemini reply generation failed (${response.status}): ${errorText}`);
+  }
+
+  const data = (await response.json()) as {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{ text?: string }>;
+      };
+    }>;
+  };
+
+  const rawReply = data.candidates?.[0]?.content?.parts
+    ?.map((part) => part.text || "")
+    .join("")
+    .trim();
+
+  if (!rawReply) {
+    throw new Error("Gemini returned an empty reply draft.");
+  }
+
+  return { reply: normalizeAiReplyResult(rawReply) };
+});
+
 ipcMain.handle("microsoft-calendar:get-events", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
   const accessToken = await getValidMicrosoftAccessToken(accountId);
@@ -3432,6 +3924,131 @@ ipcMain.handle("system:get-storage-usage", () => {
   } catch (error) {
     return { dbSizeGB: 0 };
   }
+});
+
+ipcMain.handle("system:export-backup", async (event) => {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error("Secure backup export is unavailable on this system.");
+  }
+
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) throw new Error("No window found");
+
+  const defaultName = `ryze-backup-${new Date().toISOString().slice(0, 10)}.ryzebak`;
+  const { canceled, filePath } = await dialog.showSaveDialog(window, {
+    title: "Export Encrypted Backup",
+    defaultPath: defaultName,
+    filters: [{ name: "RYZE Backup", extensions: ["ryzebak"] }],
+  });
+
+  if (canceled || !filePath) {
+    return { success: false, canceled: true };
+  }
+
+  const envelope: BackupEnvelope = {
+    version: 1,
+    createdAt: new Date().toISOString(),
+    data: {
+      settings: loadBackendSettings(),
+      folders: db.prepare("SELECT * FROM folders").all(),
+      emails: db.prepare("SELECT * FROM emails").all(),
+      labels: db.prepare("SELECT * FROM labels").all(),
+      emailLabels: db.prepare("SELECT * FROM email_labels").all(),
+      folderSyncState: db.prepare("SELECT * FROM folder_sync_state").all(),
+    },
+  };
+
+  const encrypted = safeStorage
+    .encryptString(JSON.stringify(envelope))
+    .toString("base64");
+  fs.writeFileSync(filePath, encrypted, { encoding: "utf8", mode: 0o600 });
+
+  return {
+    success: true,
+    filePath,
+    createdAt: envelope.createdAt,
+  };
+});
+
+ipcMain.handle("system:import-backup", async (event) => {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error("Secure backup import is unavailable on this system.");
+  }
+
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) throw new Error("No window found");
+
+  const { canceled, filePaths } = await dialog.showOpenDialog(window, {
+    title: "Import Encrypted Backup",
+    properties: ["openFile"],
+    filters: [{ name: "RYZE Backup", extensions: ["ryzebak"] }],
+  });
+
+  if (canceled || !filePaths?.[0]) {
+    return { success: false, canceled: true };
+  }
+
+  const encrypted = fs.readFileSync(filePaths[0], "utf8");
+  const decoded = safeStorage.decryptString(Buffer.from(encrypted, "base64"));
+  const parsed = JSON.parse(decoded) as BackupEnvelope;
+
+  if (!parsed || parsed.version !== 1 || !parsed.data) {
+    throw new Error("Backup file is invalid or unsupported.");
+  }
+
+  const data = parsed.data;
+
+  db.transaction(() => {
+    db.exec(`
+      DELETE FROM email_labels;
+      DELETE FROM labels;
+      DELETE FROM emails;
+      DELETE FROM folders;
+      DELETE FROM folder_sync_state;
+    `);
+
+    const insertFolder = db.prepare(`
+      INSERT INTO folders (id, accountId, displayName, parentFolderId, wellKnownName, totalItemCount, unreadItemCount, depth, path, icon)
+      VALUES (@id, @accountId, @displayName, @parentFolderId, @wellKnownName, @totalItemCount, @unreadItemCount, @depth, @path, COALESCE(@icon, ''))
+    `);
+    for (const row of data.folders || []) insertFolder.run(row);
+
+    const insertEmail = db.prepare(`
+      INSERT INTO emails (id, accountId, folder, subject, bodyPreview, bodyContentType, bodyContent, receivedDateTime, isRead, hasAttachments, fromName, fromAddress, toRecipients, ccRecipients, snoozedUntil, isStarred, attachments)
+      VALUES (@id, @accountId, @folder, @subject, @bodyPreview, @bodyContentType, @bodyContent, @receivedDateTime, @isRead, @hasAttachments, @fromName, @fromAddress, @toRecipients, @ccRecipients, @snoozedUntil, COALESCE(@isStarred, 0), COALESCE(@attachments, '[]'))
+    `);
+    for (const row of data.emails || []) insertEmail.run(row);
+
+    const insertLabel = db.prepare(`
+      INSERT INTO labels (id, accountId, name, color, createdAt, updatedAt)
+      VALUES (@id, @accountId, @name, @color, @createdAt, @updatedAt)
+    `);
+    for (const row of data.labels || []) insertLabel.run(row);
+
+    const insertEmailLabel = db.prepare(`
+      INSERT INTO email_labels (accountId, messageId, labelId, createdAt)
+      VALUES (@accountId, @messageId, @labelId, @createdAt)
+    `);
+    for (const row of data.emailLabels || []) insertEmailLabel.run(row);
+
+    const insertSync = db.prepare(`
+      INSERT INTO folder_sync_state (accountId, folderId, deltaLink, lastFullSyncAt, lastDeltaSyncAt)
+      VALUES (@accountId, @folderId, @deltaLink, @lastFullSyncAt, @lastDeltaSyncAt)
+    `);
+    for (const row of data.folderSyncState || []) insertSync.run(row);
+  })();
+
+  const backendSettings = sanitizeBackendSettings(data.settings || {});
+  fs.writeFileSync(settingsFilePath, JSON.stringify(backendSettings, null, 2), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+
+  return {
+    success: true,
+    filePath: filePaths[0],
+    createdAt: parsed.createdAt,
+  };
 });
 
 ipcMain.on("system:update-settings", (_event, settings) => {
@@ -4306,6 +4923,65 @@ ipcMain.handle("google-account:delete", async (_event, payload) => {
   }
 
   return { success: true };
+});
+
+ipcMain.handle("accounts:get-health", () => {
+  return getAccountHealthSnapshots();
+});
+
+// =============================================================================
+// IPC HANDLERS — IMAP ACCOUNT MANAGEMENT
+// =============================================================================
+
+ipcMain.handle("imap-account:connect", async (_event, payload) => {
+  const config = validateImapConnectionConfig(payload);
+  const accountId = buildImapAccountId(config.email);
+  const now = new Date().toISOString();
+  const accounts = loadImapAccounts();
+
+  accounts[accountId] = {
+    ...config,
+    accountId,
+    provider: "imap",
+    createdAt: accounts[accountId]?.createdAt ?? now,
+    updatedAt: now,
+  };
+
+  saveImapAccounts(accounts);
+  upsertImapSystemFolders(accountId);
+
+  return {
+    account: {
+      id: accountId,
+      name: config.displayName,
+      email: config.email,
+      provider: "imap",
+      externalId: config.host,
+    },
+  };
+});
+
+ipcMain.handle("imap-account:delete", async (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+
+  db.transaction(() => {
+    db.prepare("DELETE FROM email_labels WHERE accountId = ?").run(accountId);
+    db.prepare("DELETE FROM emails WHERE accountId = ?").run(accountId);
+    db.prepare("DELETE FROM folders WHERE accountId = ?").run(accountId);
+  })();
+
+  const accounts = loadImapAccounts();
+  if (accounts[accountId]) {
+    delete accounts[accountId];
+    saveImapAccounts(accounts);
+  }
+
+  return { success: true };
+});
+
+ipcMain.handle("imap:sync", async (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+  return syncImapAccount(accountId);
 });
 
 // =============================================================================

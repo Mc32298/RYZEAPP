@@ -14,6 +14,10 @@ describe("resolveManualSyncProvider", () => {
     expect(resolveManualSyncProvider("microsoft")).toBe("microsoft");
   });
 
+  it("uses imap sync for imap accounts", () => {
+    expect(resolveManualSyncProvider("imap")).toBe("imap");
+  });
+
   it("falls back to microsoft for unknown providers", () => {
     expect(resolveManualSyncProvider("local")).toBe("microsoft");
   });
@@ -61,5 +65,22 @@ describe("refreshMailboxAfterReply", () => {
     });
 
     expect(calls).toEqual(["microsoft-all:ms-1", "refresh"]);
+  });
+
+  it("awaits IMAP sync before refreshing the local UI", async () => {
+    const calls: string[] = [];
+
+    await refreshMailboxAfterReply({
+      provider: "imap",
+      accountId: "imap-user_example.com",
+      syncImapEmails: async (accountId) => {
+        calls.push(`imap:${accountId}`);
+      },
+      refreshLocalUi: async () => {
+        calls.push("refresh");
+      },
+    });
+
+    expect(calls).toEqual(["imap:imap-user_example.com", "refresh"]);
   });
 });

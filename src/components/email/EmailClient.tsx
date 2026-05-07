@@ -44,8 +44,23 @@ import {
   Reply,
   Search,
   Settings2,
+  CalendarDays,
+  Folder,
+  Plus,
+  Tags,
+  UserRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+  CommandShortcut,
+} from "@/components/ui/command";
 import {
   EmailThread,
   FolderType,
@@ -70,6 +85,7 @@ import {
 import { toast } from "sonner";
 import { UpdaterTopBarButton } from "@/components/AutoUpdater";
 import { formatGoogleConnectError } from "./googleAuthErrors";
+import { getSenderPolicy, loadSenderTrustPolicies } from "./senderTrust";
 
 const SETTINGS_STORAGE_KEY = "email-client-settings";
 const ACCOUNTS_STORAGE_KEY = "email-client-accounts";
@@ -131,7 +147,10 @@ function loadStoredAccounts(): Account[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(
-      (account) => account?.provider === "microsoft" || account?.provider === "google",
+      (account) =>
+        account?.provider === "microsoft" ||
+        account?.provider === "google" ||
+        account?.provider === "imap",
     );
   } catch {
     return [];
@@ -144,6 +163,7 @@ function getThemeAttribute(settings: EmailSettings) {
 
 function getAccountProviderLabel(account: Account) {
   if (account.provider === "google") return "Gmail";
+  if (account.provider === "imap") return "IMAP";
   if (account.provider === "microsoft") return "Outlook";
   return account.email;
 }
@@ -448,12 +468,15 @@ export function EmailClient() {
   const [selectedEmailIds, setSelectedEmailIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [aiSummaryRequestToken, setAiSummaryRequestToken] = useState(0);
   const [globalSearchDraft, setGlobalSearchDraft] = useState("");
   const [globalSearchSelectedIndex, setGlobalSearchSelectedIndex] =
     useState(0);
   const [isGlobalSearchActionMenuOpen, setIsGlobalSearchActionMenuOpen] =
     useState(false);
   const [globalSearchActionIndex, setGlobalSearchActionIndex] = useState(0);
+  const [senderTrustRevision, setSenderTrustRevision] = useState(0);
   const globalSearchRef = React.useRef<HTMLInputElement>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [hasLoadedDrafts, setHasLoadedDrafts] = useState(false);
@@ -472,7 +495,10 @@ export function EmailClient() {
   >(null);
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
   const [connectGoogleError, setConnectGoogleError] = useState<string | null>(null);
+  const [isConnectingImap, setIsConnectingImap] = useState(false);
+  const [connectImapError, setConnectImapError] = useState<string | null>(null);
   const [mailSyncError, setMailSyncError] = useState<string | null>(null);
+  const scheduledDraftsInFlightRef = React.useRef<Set<string>>(new Set());
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [mailFolders, setMailFolders] = useState<MailFolder[]>([]);
   const [initialSyncedAccountIds, setInitialSyncedAccountIds] = useState<
@@ -502,7 +528,14 @@ export function EmailClient() {
   // Watch for account connection to auto-advance tutorial
   useEffect(() => {
     if (tutorialStep === 2 && !isSettingsOpen) {
-      if (accounts.some((a) => a.provider === "microsoft" || a.provider === "google")) {
+      if (
+        accounts.some(
+          (a) =>
+            a.provider === "microsoft" ||
+            a.provider === "google" ||
+            a.provider === "imap",
+        )
+      ) {
         const timer = setTimeout(() => setTutorialStep(3), 400);
         return () => clearTimeout(timer);
       }
@@ -820,10 +853,14 @@ export function EmailClient() {
 
         const msAccounts = accounts.filter((a) => a.provider === "microsoft");
         const googleAccounts = accounts.filter((a) => a.provider === "google");
+        const imapAccounts = accounts.filter((a) => a.provider === "imap");
         const msAccountsToSync = msAccounts.filter(
           (a) => !initialSyncedAccountIds.includes(a.id),
         );
         const googleAccountsToSync = googleAccounts.filter(
+          (a) => !initialSyncedAccountIds.includes(a.id),
+        );
+        const imapAccountsToSync = imapAccounts.filter(
           (a) => !initialSyncedAccountIds.includes(a.id),
         );
 
@@ -849,7 +886,22 @@ export function EmailClient() {
           }
         }
 
-        const allSyncedAccounts = [...msAccountsToSync, ...googleAccountsToSync];
+        if (window.electronAPI?.syncImapEmails && imapAccountsToSync.length > 0) {
+          for (const account of imapAccountsToSync) {
+            try {
+              await window.electronAPI.syncImapEmails(account.id);
+              if (isCancelled) return;
+            } catch (error) {
+              console.error(`Initial IMAP sync failed for ${account.email}`, error);
+            }
+          }
+        }
+
+        const allSyncedAccounts = [
+          ...msAccountsToSync,
+          ...googleAccountsToSync,
+          ...imapAccountsToSync,
+        ];
         if (!isCancelled && allSyncedAccounts.length > 0) {
           setInitialSyncedAccountIds((prev) => {
             const newIds = allSyncedAccounts
@@ -918,6 +970,7 @@ export function EmailClient() {
         isSyncing = true;
         const msAccounts = accounts.filter((a) => a.provider === "microsoft");
         const googleAccounts = accounts.filter((a) => a.provider === "google");
+        const imapAccounts = accounts.filter((a) => a.provider === "imap");
 
         if (window.electronAPI?.syncMicrosoftEmails) {
           for (const account of msAccounts) {
@@ -930,6 +983,13 @@ export function EmailClient() {
           for (const account of googleAccounts) {
             if (isCancelled) break;
             await window.electronAPI.syncGmailEmails(account.id);
+          }
+        }
+
+        if (window.electronAPI?.syncImapEmails) {
+          for (const account of imapAccounts) {
+            if (isCancelled) break;
+            await window.electronAPI.syncImapEmails(account.id);
           }
         }
 
@@ -963,6 +1023,14 @@ export function EmailClient() {
   const endOfTodayTimestamp = getEndOfTodayTimestamp();
 
   const folderEmails = emails.filter((email) => {
+    const senderPolicy = getSenderPolicy(
+      loadSenderTrustPolicies(),
+      email.sender.email || "",
+    );
+    if (senderPolicy.blocked || senderPolicy.muted) {
+      return false;
+    }
+
     const snoozedUntilTimestamp = email.snoozedUntil?.getTime() ?? null;
     const isSnoozedInFuture =
       snoozedUntilTimestamp !== null && snoozedUntilTimestamp > nowTimestamp;
@@ -1032,7 +1100,7 @@ export function EmailClient() {
     : null;
   const threadRows = React.useMemo(
     () => buildThreadListRows(folderEmails),
-    [folderEmails],
+    [folderEmails, senderTrustRevision],
   );
   const liveSearchRows = React.useMemo(
     () =>
@@ -1080,6 +1148,16 @@ export function EmailClient() {
       setSelectedEmailId(threadRows[0].latestMessage.id);
     }
   }, [folderEmails, selectedEmailId, threadRows]);
+
+  useEffect(() => {
+    const syncPolicies = () => setSenderTrustRevision((value) => value + 1);
+    window.addEventListener("storage", syncPolicies);
+    window.addEventListener("ryze-sender-trust-updated", syncPolicies);
+    return () => {
+      window.removeEventListener("storage", syncPolicies);
+      window.removeEventListener("ryze-sender-trust-updated", syncPolicies);
+    };
+  }, []);
 
   const systemFolderIds = getSystemFolderIds(mailFolders);
 
@@ -1175,6 +1253,13 @@ export function EmailClient() {
             );
           }
           await window.electronAPI.deleteGoogleAccount(accountId);
+        } else if (accountToDelete.provider === "imap") {
+          if (!window.electronAPI?.deleteImapAccount) {
+            throw new Error(
+              "Delete account is only available in the Electron desktop app.",
+            );
+          }
+          await window.electronAPI.deleteImapAccount(accountId);
         }
 
         const nextAccounts = accounts.filter(
@@ -1354,6 +1439,67 @@ export function EmailClient() {
       setIsConnectingGoogle(false);
     }
   }, [accounts]);
+
+  const handleConnectImap = useCallback(
+    async (payload: {
+      email: string;
+      displayName: string;
+      host: string;
+      port: number;
+      secure: boolean;
+      username: string;
+      password: string;
+    }) => {
+      setConnectImapError(null);
+
+      if (!window.electronAPI?.connectImapAccount) {
+        setConnectImapError(
+          "IMAP setup is available only in the Electron desktop app.",
+        );
+        return;
+      }
+
+      setIsConnectingImap(true);
+      try {
+        const result = await window.electronAPI.connectImapAccount(payload);
+        const connected = result.account;
+        const existing = accounts.find(
+          (account) =>
+            account.id === connected.id ||
+            account.email.toLowerCase() === connected.email.toLowerCase(),
+        );
+        const accountId = existing?.id ?? connected.id;
+
+        const nextAccount: Account = {
+          id: accountId,
+          name: connected.name,
+          email: connected.email,
+          initials: getInitials(connected.name),
+          color: existing?.color ?? selectProfileColor(connected.email),
+          provider: "imap",
+          externalId: connected.externalId,
+        };
+
+        setAccounts((prev) => {
+          const prevExisting = prev.find((account) => account.id === accountId);
+          if (prevExisting) {
+            return prev.map((account) =>
+              account.id === accountId ? nextAccount : account,
+            );
+          }
+          return [...prev, nextAccount];
+        });
+        setCurrentAccountId(accountId);
+      } catch (error) {
+        setConnectImapError(
+          error instanceof Error ? error.message : "IMAP setup failed.",
+        );
+      } finally {
+        setIsConnectingImap(false);
+      }
+    },
+    [accounts],
+  );
 
   const handleSelectEmail = useCallback(
     async (email: EmailThread) => {
@@ -1564,6 +1710,35 @@ export function EmailClient() {
       }
     },
     [selectedEmailId, emails, currentAccountId, accounts],
+  );
+
+  const handleMarkRead = useCallback(
+    (id: string) => {
+      const emailToUpdate = emails.find((e) => e.id === id);
+      if (!emailToUpdate) return;
+
+      setEmails((prev) =>
+        prev.map((email) =>
+          email.id === id ? { ...email, isRead: true } : email,
+        ),
+      );
+
+      const readAccountId = emailToUpdate.accountId || currentAccountId;
+      const readAccount = accounts.find((a) => a.id === readAccountId);
+
+      if (readAccount?.provider === "google") {
+        window.electronAPI
+          ?.markGmailEmailAsRead?.(readAccountId, emailToUpdate.messageId)
+          .catch((error) =>
+            console.error("Failed to mark Gmail email as read:", error),
+          );
+      } else if (window.electronAPI?.markMicrosoftEmailAsRead) {
+        window.electronAPI
+          .markMicrosoftEmailAsRead(readAccountId, emailToUpdate.messageId)
+          .catch((error) => console.error("Failed to mark read on server:", error));
+      }
+    },
+    [emails, currentAccountId, accounts],
   );
 
   const handleSnooze = useCallback(
@@ -1925,6 +2100,7 @@ export function EmailClient() {
       mode: "reply" | "replyAll",
       tone?: AiTone,
       sourceEmail?: EmailThread | null,
+      generatedReplyText?: string,
     ) => {
       const targetEmail = sourceEmail || selectedEmail;
       if (!targetEmail) return;
@@ -1960,13 +2136,17 @@ export function EmailClient() {
               .join(", ") || ""
           : "";
 
+      const replyPrefix = generatedReplyText?.trim()
+        ? `<p>${plainTextToHtml(generatedReplyText.trim()).replace(/\n/g, "<br/>")}</p><div><br/></div>`
+        : "";
+
       handleCompose({
         accountId: composerAccount.id,
         provider: composerAccount.provider,
         to,
         cc,
         subject,
-        body: buildReplyHtml(targetEmail, settings.signature),
+        body: `${replyPrefix}${buildReplyHtml(targetEmail, settings.signature)}`,
         aiTone: tone,
         aiHint: tone ? toneHintFor(tone) : undefined,
       });
@@ -1982,9 +2162,41 @@ export function EmailClient() {
     openReplyDraft("replyAll", undefined, message);
   }, [openReplyDraft]);
 
-  const handleReplyWithTone = useCallback((tone: AiTone) => {
-    openReplyDraft("reply", tone);
-  }, [openReplyDraft]);
+  const handleReplyWithTone = useCallback(
+    async (tone: AiTone) => {
+      if (!selectedEmail) return;
+
+      if (!window.electronAPI?.generateReplyWithAi) {
+        openReplyDraft("reply", tone);
+        return;
+      }
+
+      try {
+        const result = await window.electronAPI.generateReplyWithAi({
+          subject: selectedEmail.subject,
+          senderName: selectedEmail.sender.name,
+          senderEmail: selectedEmail.sender.email,
+          body: selectedEmail.body || "",
+          preview: selectedEmail.preview || "",
+          tone,
+        });
+
+        const replyText =
+          typeof result?.reply === "string" ? result.reply.trim() : "";
+
+        openReplyDraft("reply", tone, selectedEmail, replyText);
+      } catch (error) {
+        console.error("AI reply generation failed:", error);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Could not generate AI reply. Opened a standard reply draft.",
+        );
+        openReplyDraft("reply", tone, selectedEmail);
+      }
+    },
+    [openReplyDraft, selectedEmail],
+  );
 
   const handleForward = useCallback((message?: EmailThread) => {
     const targetEmail = message || selectedEmail;
@@ -2064,6 +2276,22 @@ export function EmailClient() {
     setDrafts((prev) => prev.filter((draft) => draft.id !== id));
   }, []);
 
+  const handleDraftSchedule = useCallback(
+    (id: string, scheduledSendAt: string | null) => {
+      setDrafts((prev) =>
+        prev.map((draft) =>
+          draft.id === id
+            ? {
+                ...draft,
+                scheduledSendAt: scheduledSendAt || undefined,
+              }
+            : draft,
+        ),
+      );
+    },
+    [],
+  );
+
   const handleDraftSend = useCallback(
     async (id: string) => {
       const draft = drafts.find((d) => d.id === id);
@@ -2114,6 +2342,34 @@ export function EmailClient() {
     },
     [accounts, currentAccount, drafts],
   );
+
+  useEffect(() => {
+    if (drafts.length === 0) return;
+
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+
+      drafts.forEach((draft) => {
+        if (!draft.scheduledSendAt || !draft.to.trim()) return;
+
+        const scheduledAt = Date.parse(draft.scheduledSendAt);
+        if (Number.isNaN(scheduledAt) || scheduledAt > now) return;
+        if (scheduledDraftsInFlightRef.current.has(draft.id)) return;
+
+        scheduledDraftsInFlightRef.current.add(draft.id);
+        setDrafts((prev) =>
+          prev.map((item) =>
+            item.id === draft.id ? { ...item, scheduledSendAt: undefined } : item,
+          ),
+        );
+        handleDraftSend(draft.id).finally(() => {
+          scheduledDraftsInFlightRef.current.delete(draft.id);
+        });
+      });
+    }, 15_000);
+
+    return () => window.clearInterval(timer);
+  }, [drafts, handleDraftSend]);
 
   const handleInlineReplySend = useCallback(
     async (
@@ -2221,6 +2477,7 @@ export function EmailClient() {
         provider: resolveManualSyncProvider(provider),
         accountId,
         syncGmailEmails: window.electronAPI?.syncGmailEmails,
+        syncImapEmails: window.electronAPI?.syncImapEmails,
         syncMicrosoftEmails: window.electronAPI?.syncMicrosoftEmails,
         syncMicrosoftInbox: window.electronAPI?.syncMicrosoftInbox,
         refreshLocalUi: fetchLocalAndSetUI,
@@ -2712,6 +2969,8 @@ export function EmailClient() {
 
       if (syncProvider === "google" && api?.syncGmailEmails) {
         await api.syncGmailEmails(currentAccount.id);
+      } else if (syncProvider === "imap" && api?.syncImapEmails) {
+        await api.syncImapEmails(currentAccount.id);
       } else if (api?.syncMicrosoftEmails) {
         await api.syncMicrosoftEmails(currentAccount.id);
       } else if (api?.syncMicrosoftInbox) {
@@ -2723,6 +2982,100 @@ export function EmailClient() {
     }
   }, [currentAccount.id, currentAccount.provider, fetchLocalAndSetUI]);
 
+  const handleFolderSelect = useCallback((folderId: string) => {
+    setActiveFolder(folderId as FolderType);
+    setActiveLabelId(null);
+    setSelectedEmailId(null);
+    setSelectedEmailIds([]);
+  }, []);
+
+  const handleAccountSwitch = useCallback(
+    (account: Account) => {
+      const nextAccountInbox =
+        mailFolders.find(
+          (folder) =>
+            folder.accountId === account.id && folder.wellKnownName === "inbox",
+        )?.id || "inbox";
+      const shouldFollowInbox =
+        activeFolder !== "all-inboxes" &&
+        (activeFolder === "inbox" || activeKnownFolder === "inbox");
+
+      setCurrentAccountId(account.id);
+      setActiveLabelId(null);
+      if (shouldFollowInbox) {
+        setActiveFolder(nextAccountInbox as FolderType);
+      }
+      setSelectedEmailId(null);
+      setSelectedEmailIds([]);
+    },
+    [mailFolders, activeFolder, activeKnownFolder],
+  );
+
+  const handleQuickApplyLabel = useCallback(() => {
+    if (!selectedEmail) return;
+    if (emailLabels.length === 0) {
+      toast.error("Create a label first.");
+      return;
+    }
+
+    const options = emailLabels
+      .map((label, index) => `${index + 1}. ${label.name}`)
+      .join("\n");
+    const input = window.prompt(`Apply label:\n${options}`);
+    if (!input) return;
+
+    const selectedIndex = Number.parseInt(input, 10);
+    const label =
+      Number.isInteger(selectedIndex) &&
+      selectedIndex >= 1 &&
+      selectedIndex <= emailLabels.length
+        ? emailLabels[selectedIndex - 1]
+        : emailLabels.find(
+            (item) => item.name.toLowerCase() === input.trim().toLowerCase(),
+          );
+
+    if (!label) {
+      toast.error("Label not found.");
+      return;
+    }
+
+    void handleToggleEmailLabel(selectedEmail, label);
+  }, [selectedEmail, emailLabels, handleToggleEmailLabel]);
+
+  const handleQuickMove = useCallback(() => {
+    if (!selectedEmail) return;
+    if (mailFolders.length === 0) return;
+
+    const options = mailFolders
+      .map((folder, index) => `${index + 1}. ${folder.displayName}`)
+      .join("\n");
+    const input = window.prompt(`Move to folder:\n${options}`);
+    if (!input) return;
+
+    const selectedIndex = Number.parseInt(input, 10);
+    const folder =
+      Number.isInteger(selectedIndex) &&
+      selectedIndex >= 1 &&
+      selectedIndex <= mailFolders.length
+        ? mailFolders[selectedIndex - 1]
+        : mailFolders.find(
+            (item) =>
+              item.displayName.toLowerCase() === input.trim().toLowerCase(),
+          );
+
+    if (!folder) {
+      toast.error("Folder not found.");
+      return;
+    }
+
+    void handleEmailDropToFolder({
+      emailId: selectedEmail.id,
+      messageId: selectedEmail.messageId,
+      sourceFolderId: selectedEmail.folderId || selectedEmail.folder,
+      destinationFolderId: folder.id,
+    });
+  }, [selectedEmail, mailFolders, handleEmailDropToFolder]);
+
   useEffect(() => {
     if (!isGlobalSearchOpen) return;
     const timer = window.setTimeout(() => globalSearchRef.current?.focus(), 0);
@@ -2732,6 +3085,20 @@ export function EmailClient() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isSessionLocked) return;
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setIsCommandPaletteOpen((prev) => !prev);
+        return;
+      }
+
+      if (isCommandPaletteOpen) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setIsCommandPaletteOpen(false);
+        }
+        return;
+      }
 
       if (isGlobalSearchOpen) {
         if (event.key === "Escape") {
@@ -2776,11 +3143,70 @@ export function EmailClient() {
           break;
         case "e":
         case "E":
+        case "a":
+        case "A":
           if (selectedEmailId) {
             event.preventDefault();
             handleArchive(selectedEmailId);
           }
           break;
+        case "d":
+        case "D":
+        case "Delete":
+        case "Backspace":
+          if (selectedEmailId) {
+            event.preventDefault();
+            handleDelete(selectedEmailId);
+          }
+          break;
+        case "s":
+        case "S":
+          if (selectedEmailId) {
+            event.preventDefault();
+            handleToggleStar(selectedEmailId);
+          }
+          break;
+        case "u":
+        case "U":
+          if (selectedEmailId) {
+            event.preventDefault();
+            const selected = emails.find((email) => email.id === selectedEmailId);
+            if (selected?.isRead) {
+              handleMarkUnread(selectedEmailId);
+            } else {
+              handleMarkRead(selectedEmailId);
+            }
+          }
+          break;
+        case "l":
+        case "L":
+          event.preventDefault();
+          handleQuickApplyLabel();
+          break;
+        case "m":
+        case "M":
+          event.preventDefault();
+          handleQuickMove();
+          break;
+        case "z":
+        case "Z":
+          if (selectedEmailId) {
+            event.preventDefault();
+            void handleSnooze(selectedEmailId);
+          }
+          break;
+        case "n":
+        case "N": {
+          event.preventDefault();
+          const unread = folderEmails.filter((email) => !email.isRead);
+          if (unread.length === 0) break;
+          const currentIndex = unread.findIndex(
+            (email) => email.id === selectedEmailId,
+          );
+          const nextUnread = unread[currentIndex + 1] ?? unread[0];
+          if (nextUnread) void handleSelectEmail(nextUnread);
+          break;
+        }
         case "ArrowDown": {
           event.preventDefault();
           const idx = folderEmails.findIndex(
@@ -2807,14 +3233,23 @@ export function EmailClient() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     isSessionLocked,
+    isCommandPaletteOpen,
     isGlobalSearchOpen,
     searchQuery,
     selectedEmailId,
     folderEmails,
+    emails,
     handleArchive,
+    handleDelete,
+    handleMarkRead,
+    handleMarkUnread,
+    handleQuickApplyLabel,
+    handleQuickMove,
     handleCompose,
     handleReply,
     handleSelectEmail,
+    handleSnooze,
+    handleToggleStar,
   ]);
 
   const appStyle = {
@@ -2863,11 +3298,15 @@ export function EmailClient() {
         onSettingsChange={handleSettingsChange}
         onConnectMicrosoft={handleConnectMicrosoft}
         onConnectGoogle={handleConnectGoogle}
+        onConnectImap={handleConnectImap}
         onDeleteAccount={handleDeleteAccount}
         isConnectingMicrosoft={isConnectingMicrosoft}
         connectMicrosoftError={connectMicrosoftError ?? mailSyncError}
         isConnectingGoogle={isConnectingGoogle}
         connectGoogleError={connectGoogleError}
+        isConnectingImap={isConnectingImap}
+        connectImapError={connectImapError}
+        emails={emails}
       />
 
       <div
@@ -2974,12 +3413,7 @@ export function EmailClient() {
             isCollapsed={isSidebarCollapsed}
             onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
             activeFolder={activeFolder}
-            onFolderSelect={(folder) => {
-              setActiveFolder(folder);
-              setActiveLabelId(null);
-              setSelectedEmailId(null);
-              setSelectedEmailIds([]);
-            }}
+            onFolderSelect={handleFolderSelect}
             unreadCounts={unreadCounts}
             onRenameFolder={handleRenameFolder}
             onDeleteFolder={handleDeleteFolder}
@@ -2988,25 +3422,7 @@ export function EmailClient() {
             onCompose={() => handleCompose()}
             currentAccount={currentAccount}
             accounts={accounts}
-            onAccountSwitch={(account) => {
-              const nextAccountInbox =
-                mailFolders.find(
-                  (folder) =>
-                    folder.accountId === account.id &&
-                    folder.wellKnownName === "inbox",
-                )?.id || "inbox";
-              const shouldFollowInbox =
-                activeFolder !== "all-inboxes" &&
-                (activeFolder === "inbox" || activeKnownFolder === "inbox");
-
-              setCurrentAccountId(account.id);
-              setActiveLabelId(null);
-              if (shouldFollowInbox) {
-                setActiveFolder(nextAccountInbox as FolderType);
-              }
-              setSelectedEmailId(null);
-              setSelectedEmailIds([]);
-            }}
+            onAccountSwitch={handleAccountSwitch}
             onRefresh={handleManualRefresh}
             onOpenSettings={() => setIsSettingsOpen(true)}
             folders={mailFolders}
@@ -3100,9 +3516,11 @@ export function EmailClient() {
             labels={emailLabels}
             onToggleStar={handleToggleStar}
             onMarkUnread={handleMarkUnread}
+            onSnooze={handleSnooze}
             onDownloadAttachment={handleDownloadAttachment}
             onToggleLabel={handleToggleEmailLabel}
             isDarkMode={isAppDarkMode}
+            aiSummaryRequestToken={aiSummaryRequestToken}
           />
         </motion.div>
       </div>
@@ -3121,10 +3539,164 @@ export function EmailClient() {
         onDraftUpdate={handleDraftUpdate}
         onDraftClose={handleDraftClose}
         onDraftSend={handleDraftSend}
+        onDraftSchedule={handleDraftSchedule}
         onDraftMinimize={handleDraftMinimize}
         onDraftRestore={handleDraftRestore}
         onDraftFullscreen={handleDraftFullscreen}
       />
+      <CommandDialog
+        open={isCommandPaletteOpen}
+        onOpenChange={setIsCommandPaletteOpen}
+      >
+        <CommandInput placeholder="Run action, jump folder, or switch account..." />
+        <CommandList>
+          <CommandEmpty>No matching command.</CommandEmpty>
+          <CommandGroup heading="Actions">
+            <CommandItem
+              onSelect={() => {
+                handleCompose();
+                setIsCommandPaletteOpen(false);
+              }}
+            >
+              <Plus />
+              Compose
+              <CommandShortcut>C</CommandShortcut>
+            </CommandItem>
+            <CommandItem
+              onSelect={() => {
+                setIsCalendarOpen((prev) => !prev);
+                setIsCommandPaletteOpen(false);
+              }}
+            >
+              <CalendarDays />
+              Toggle calendar
+              <CommandShortcut>T</CommandShortcut>
+            </CommandItem>
+            <CommandItem
+              onSelect={() => {
+                setGlobalSearchDraft(searchQuery);
+                setGlobalSearchSelectedIndex(0);
+                setIsGlobalSearchActionMenuOpen(false);
+                setGlobalSearchActionIndex(0);
+                setIsGlobalSearchOpen(true);
+                setIsCommandPaletteOpen(false);
+              }}
+            >
+              <Search />
+              Open global search
+              <CommandShortcut>Shift+Space</CommandShortcut>
+            </CommandItem>
+            <CommandItem
+              onSelect={() => {
+                setIsSettingsOpen(true);
+                setIsCommandPaletteOpen(false);
+              }}
+            >
+              <Settings2 />
+              Open settings
+            </CommandItem>
+            <CommandItem
+              onSelect={() => {
+                void handleManualRefresh();
+                setIsCommandPaletteOpen(false);
+              }}
+            >
+              <ArrowRight />
+              Refresh mailbox
+            </CommandItem>
+            <CommandItem
+              onSelect={() => {
+                if (selectedEmail) {
+                  setAiSummaryRequestToken((prev) => prev + 1);
+                } else {
+                  toast.error("Select an email first to run AI summary.");
+                }
+                setIsCommandPaletteOpen(false);
+              }}
+            >
+              <Sparkles />
+              Run AI summary
+              <CommandShortcut>Alt+I</CommandShortcut>
+            </CommandItem>
+            <CommandItem
+              onSelect={() => {
+                const name = window.prompt("New label name");
+                if (name?.trim()) {
+                  void handleCreateLabel(name.trim());
+                }
+                setIsCommandPaletteOpen(false);
+              }}
+            >
+              <Tags />
+              Create label
+            </CommandItem>
+            <CommandItem
+              onSelect={() => {
+                const name = window.prompt("New folder name");
+                if (name?.trim()) {
+                  void handleCreateFolder(name.trim());
+                }
+                setIsCommandPaletteOpen(false);
+              }}
+            >
+              <Folder />
+              Create folder
+            </CommandItem>
+          </CommandGroup>
+          <CommandSeparator />
+          <CommandGroup heading="Jump Account">
+            {accounts.map((account) => (
+              <CommandItem
+                key={`account-${account.id}`}
+                onSelect={() => {
+                  handleAccountSwitch(account);
+                  setIsCommandPaletteOpen(false);
+                }}
+              >
+                <UserRound />
+                {account.email}
+                <CommandShortcut>
+                  {getAccountProviderLabel(account)}
+                </CommandShortcut>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+          <CommandSeparator />
+          <CommandGroup heading="Jump Folder">
+            <CommandItem
+              onSelect={() => {
+                handleFolderSelect("all-inboxes");
+                setIsCommandPaletteOpen(false);
+              }}
+            >
+              <Folder />
+              All inboxes
+            </CommandItem>
+            <CommandItem
+              onSelect={() => {
+                handleFolderSelect("all-sent");
+                setIsCommandPaletteOpen(false);
+              }}
+            >
+              <Folder />
+              All sent
+            </CommandItem>
+            {mailFolders.map((folder) => (
+              <CommandItem
+                key={`folder-${folder.id}`}
+                onSelect={() => {
+                  handleFolderSelect(folder.id);
+                  setIsCommandPaletteOpen(false);
+                }}
+              >
+                <Folder />
+                {folder.displayName}
+                <CommandShortcut>{folder.accountId}</CommandShortcut>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        </CommandList>
+      </CommandDialog>
 
       <AnimatePresence>
         {isGlobalSearchOpen && (

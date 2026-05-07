@@ -11,6 +11,10 @@ describe("isValidAccountId", () => {
     expect(isValidAccountId("google-109876543210987654321")).toBe(true);
   });
 
+  it("accepts imap account ids", () => {
+    expect(isValidAccountId("imap-user_example.com")).toBe(true);
+  });
+
   it("rejects unsupported prefixes", () => {
     expect(isValidAccountId("gmail-123")).toBe(false);
   });

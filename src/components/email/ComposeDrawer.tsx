@@ -27,6 +27,7 @@ export interface ComposeDraft {
   isFullscreen: boolean;
   aiTone?: AiTone;
   aiHint?: string;
+  scheduledSendAt?: string;
 }
 
 interface ComposeDrawerProps {
@@ -34,6 +35,7 @@ interface ComposeDrawerProps {
   onDraftUpdate: (id: string, updates: Partial<ComposeDraft>) => void;
   onDraftClose: (id: string) => void;
   onDraftSend: (id: string) => void;
+  onDraftSchedule: (id: string, scheduledSendAt: string | null) => void;
   onDraftMinimize: (id: string) => void;
   onDraftRestore: (id: string) => void;
   onDraftFullscreen: (id: string) => void;
@@ -44,6 +46,7 @@ function ComposeCard({
   onUpdate,
   onClose,
   onSend,
+  onSchedule,
   onMinimize,
   onFullscreen,
 }: {
@@ -51,10 +54,12 @@ function ComposeCard({
   onUpdate: (updates: Partial<ComposeDraft>) => void;
   onClose: () => void;
   onSend: () => void;
+  onSchedule: (scheduledSendAt: string | null) => void;
   onMinimize: () => void;
   onFullscreen: () => void;
 }) {
   const [showCC, setShowCC] = useState(false);
+  const [showScheduleMenu, setShowScheduleMenu] = useState(false);
   const [lastEditedAt, setLastEditedAt] = useState<Date | null>(null);
   const toRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
@@ -85,6 +90,49 @@ function ComposeCard({
       })}`
     : "Autosave ready";
 
+  const scheduledLabel = draft.scheduledSendAt
+    ? `Scheduled ${new Date(draft.scheduledSendAt).toLocaleString(undefined, {
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })}`
+    : null;
+
+  const handleSchedulePreset = (preset: "one-hour" | "tomorrow" | "next-business-day") => {
+    const now = new Date();
+    const scheduled = new Date(now);
+
+    if (preset === "one-hour") {
+      scheduled.setTime(now.getTime() + 60 * 60 * 1000);
+    } else if (preset === "tomorrow") {
+      scheduled.setDate(scheduled.getDate() + 1);
+      scheduled.setHours(8, 0, 0, 0);
+    } else {
+      scheduled.setDate(scheduled.getDate() + 1);
+      while (scheduled.getDay() === 0 || scheduled.getDay() === 6) {
+        scheduled.setDate(scheduled.getDate() + 1);
+      }
+      scheduled.setHours(8, 0, 0, 0);
+    }
+
+    onSchedule(scheduled.toISOString());
+    setShowScheduleMenu(false);
+  };
+
+  const handleCardKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!(event.metaKey || event.ctrlKey) || event.key !== "Enter") {
+      return;
+    }
+
+    if (!draft.to.trim()) {
+      return;
+    }
+
+    event.preventDefault();
+    onSend();
+  };
+
   if (draft.isMinimized) return null;
 
   return (
@@ -93,6 +141,7 @@ function ComposeCard({
       animate={{ y: 0, opacity: 1 }}
       exit={{ y: 20, opacity: 0 }}
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+      onKeyDownCapture={handleCardKeyDown}
       className={cn(
         "flex flex-col overflow-hidden rounded-t-[var(--radius-ryze-lg)] border border-[var(--border-1)] bg-[var(--bg-2)] shadow-[0_16px_48px_-12px_oklch(0_0_0_/_0.6)]",
         draft.isFullscreen ? "fixed inset-4 z-50" : "h-[520px] w-[480px]",
@@ -226,7 +275,7 @@ function ComposeCard({
         />
 
         <div className="flex shrink-0 items-center justify-between border-t border-[var(--border-subtle)] px-4 py-3">
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="relative flex min-w-0 items-center gap-2">
             <button
               onClick={onSend}
               disabled={!draft.to}
@@ -242,12 +291,53 @@ function ComposeCard({
             </button>
             <button
               type="button"
+              onClick={() => setShowScheduleMenu((prev) => !prev)}
               className="flex h-8 items-center gap-1.5 rounded-[var(--radius-ryze-md)] border border-[var(--border-0)] px-3 text-[12px] text-[var(--fg-2)] transition-colors hover:border-[var(--ryze-accent)] hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
               title="Schedule send"
             >
               <Clock size={12} />
               Later
+              <ChevronDown size={11} />
             </button>
+            {showScheduleMenu && (
+              <div className="absolute bottom-10 left-[96px] z-20 min-w-[220px] rounded-[var(--radius-ryze-md)] border border-[var(--border-0)] bg-[var(--bg-1)] p-1 shadow-[0_12px_30px_-14px_oklch(0_0_0_/_0.8)]">
+                <button
+                  type="button"
+                  onClick={() => handleSchedulePreset("one-hour")}
+                  className="flex w-full items-center rounded-[var(--radius-ryze-sm)] px-2.5 py-2 text-left text-[12px] text-[var(--fg-1)] transition-colors hover:bg-[var(--bg-2)]"
+                >
+                  In 1 hour
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSchedulePreset("tomorrow")}
+                  className="flex w-full items-center rounded-[var(--radius-ryze-sm)] px-2.5 py-2 text-left text-[12px] text-[var(--fg-1)] transition-colors hover:bg-[var(--bg-2)]"
+                >
+                  Tomorrow 08:00
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSchedulePreset("next-business-day")}
+                  className="flex w-full items-center rounded-[var(--radius-ryze-sm)] px-2.5 py-2 text-left text-[12px] text-[var(--fg-1)] transition-colors hover:bg-[var(--bg-2)]"
+                >
+                  Next business day 08:00
+                </button>
+              </div>
+            )}
+            {scheduledLabel && (
+              <button
+                type="button"
+                onClick={() => {
+                  onSchedule(null);
+                  setShowScheduleMenu(false);
+                }}
+                className="flex h-8 items-center gap-1.5 rounded-[var(--radius-ryze-md)] border border-[var(--ryze-accent)] bg-[var(--ryze-accent-soft)] px-3 text-[11px] text-[var(--ryze-accent)] transition-colors hover:opacity-90"
+                title="Clear scheduled send"
+              >
+                <Clock size={12} />
+                {scheduledLabel}
+              </button>
+            )}
           </div>
           <div className="flex min-w-0 items-center gap-3">
             <div className="hidden min-w-0 items-center gap-2 lg:flex">
@@ -291,6 +381,7 @@ export function ComposeDrawer({
   onDraftUpdate,
   onDraftClose,
   onDraftSend,
+  onDraftSchedule,
   onDraftMinimize,
   onDraftRestore,
   onDraftFullscreen,
@@ -309,6 +400,9 @@ export function ComposeDrawer({
               onUpdate={(updates) => onDraftUpdate(draft.id, updates)}
               onClose={() => onDraftClose(draft.id)}
               onSend={() => onDraftSend(draft.id)}
+              onSchedule={(scheduledSendAt) =>
+                onDraftSchedule(draft.id, scheduledSendAt)
+              }
               onMinimize={() => onDraftMinimize(draft.id)}
               onFullscreen={() => onDraftFullscreen(draft.id)}
             />

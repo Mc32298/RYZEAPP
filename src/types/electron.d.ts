@@ -82,6 +82,16 @@ declare global {
         keyPoints?: string[];
         suggestedActions?: string[];
       }>;
+      generateReplyWithAi: (payload: {
+        subject: string;
+        senderName: string;
+        senderEmail: string;
+        body: string;
+        preview: string;
+        tone?: string;
+      }) => Promise<{
+        reply: string;
+      }>;
 
       getAiProviderKeyStatus: (provider: "gemini") => Promise<{
         provider: "gemini";
@@ -122,6 +132,30 @@ declare global {
       }) => Promise<MailFolder>;
 
       getStorageUsage: () => Promise<{ dbSizeGB: number }>;
+      exportEncryptedBackup: () => Promise<{
+        success: boolean;
+        canceled?: boolean;
+        filePath?: string;
+        createdAt?: string;
+      }>;
+      importEncryptedBackup: () => Promise<{
+        success: boolean;
+        canceled?: boolean;
+        filePath?: string;
+        createdAt?: string;
+      }>;
+      getAccountHealth: () => Promise<
+        Array<{
+          accountId: string;
+          provider: "microsoft" | "google" | "imap";
+          syncStatus: "ok" | "warning" | "idle";
+          tokenStatus: "ok" | "expiring" | "expired" | "n/a";
+          tokenExpiresAt: string | null;
+          lastSyncAt: string | null;
+          folderErrors: number;
+          storageBytes: number;
+        }>
+      >;
       updateBackendSettings: (settings: any) => void;
 
       deleteMicrosoftFolder: (payload: {
@@ -259,6 +293,25 @@ declare global {
       }>;
 
       deleteGoogleAccount: (accountId: string) => Promise<{ success: boolean }>;
+
+      connectImapAccount: (payload: {
+        email: string;
+        displayName: string;
+        host: string;
+        port: number;
+        secure: boolean;
+        username: string;
+        password: string;
+      }) => Promise<{
+        account: Pick<
+          Account,
+          "id" | "name" | "email" | "provider" | "externalId"
+        >;
+      }>;
+
+      deleteImapAccount: (accountId: string) => Promise<{ success: boolean }>;
+
+      syncImapEmails: (accountId: string) => Promise<any>;
 
       syncGmailEmails: (accountId: string) => Promise<any>;
 

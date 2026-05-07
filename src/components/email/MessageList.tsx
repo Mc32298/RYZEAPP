@@ -21,6 +21,7 @@ import {
 } from "@/types/email";
 import { type DensityMode } from "./emailPreferences";
 import { threadRowMatchesFilters } from "./threadView";
+import { classifySmartCategory } from "./smartCategories";
 import { cn } from "@/lib/utils";
 import { format, isToday, isYesterday } from "date-fns";
 
@@ -180,6 +181,7 @@ function MessageRow({
   const snoozePresets = buildSnoozePresets();
   const rowPadding = density === "compact" ? "py-2.5" : "py-3";
   const email = row.latestMessage;
+  const smartCategory = classifySmartCategory(email);
 
   return (
     <motion.div
@@ -323,6 +325,11 @@ function MessageRow({
           )}
         >
           {email.subject}
+        </div>
+        <div className="mb-0.5">
+          <span className="rounded-[var(--radius-ryze-xs)] border border-[var(--border-0)] bg-[var(--bg-1)] px-1.5 py-0.5 font-mono-jetbrains text-[10px] text-[var(--fg-2)]">
+            {smartCategory}
+          </span>
         </div>
 
         {showPreviewText && (

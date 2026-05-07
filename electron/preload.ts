@@ -47,12 +47,25 @@ type ReplyMicrosoftEmailPayload = {
   comment: string;
 };
 
+type ConnectImapAccountPayload = {
+  email: string;
+  displayName: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  password: string;
+};
+
 type AiSummarizeEmailPayload = {
   subject: string;
   senderName: string;
   senderEmail: string;
   body: string;
   preview: string;
+};
+type AiGenerateReplyPayload = AiSummarizeEmailPayload & {
+  tone?: string;
 };
 
 type AiProvider = "gemini";
@@ -171,6 +184,11 @@ function sanitizeDrafts(drafts: unknown): any[] {
       body: optionalString(value.body, `drafts[${index}].body`, 500_000),
       isMinimized: Boolean(value.isMinimized),
       isFullscreen: Boolean(value.isFullscreen),
+      scheduledSendAt: optionalString(
+        value.scheduledSendAt,
+        `drafts[${index}].scheduledSendAt`,
+        64,
+      ),
       aiTone: optionalString(value.aiTone, `drafts[${index}].aiTone`, 32),
       aiHint: optionalString(value.aiHint, `drafts[${index}].aiHint`, 2048),
     };
@@ -257,6 +275,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Add these inside contextBridge:
   getStorageUsage: () => ipcRenderer.invoke("system:get-storage-usage"),
+  exportEncryptedBackup: () => ipcRenderer.invoke("system:export-backup"),
+  importEncryptedBackup: () => ipcRenderer.invoke("system:import-backup"),
+  getAccountHealth: () => ipcRenderer.invoke("accounts:get-health"),
   updateBackendSettings: (settings: any) =>
     ipcRenderer.send("system:update-settings", sanitizeBackendSettings(settings)),
 
@@ -284,6 +305,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
       senderEmail: optionalString(payload.senderEmail, "senderEmail", 512),
       body: optionalString(payload.body, "body", 500_000),
       preview: optionalString(payload.preview, "preview", 5000),
+    });
+  },
+  generateReplyWithAi: (payload: AiGenerateReplyPayload) => {
+    if (!payload || typeof payload !== "object") {
+      throw new TypeError("payload is required");
+    }
+
+    return ipcRenderer.invoke("ai:generate-reply", {
+      subject: optionalString(payload.subject, "subject", 512),
+      senderName: optionalString(payload.senderName, "senderName", 256),
+      senderEmail: optionalString(payload.senderEmail, "senderEmail", 512),
+      body: optionalString(payload.body, "body", 500_000),
+      preview: optionalString(payload.preview, "preview", 5000),
+      tone: optionalString(payload.tone, "tone", 32),
     });
   },
 
@@ -458,6 +493,32 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   deleteGoogleAccount: (accountId: string) =>
     ipcRenderer.invoke("google-account:delete", {
+      accountId: assertString(accountId, "accountId", 256),
+    }),
+
+  connectImapAccount: (payload: ConnectImapAccountPayload) => {
+    if (!payload || typeof payload !== "object") {
+      throw new TypeError("payload is required");
+    }
+
+    return ipcRenderer.invoke("imap-account:connect", {
+      email: assertString(payload.email, "email", 320),
+      displayName: assertString(payload.displayName, "displayName", 128),
+      host: assertString(payload.host, "host", 253),
+      port: payload.port,
+      secure: payload.secure,
+      username: assertString(payload.username, "username", 320),
+      password: assertString(payload.password, "password", 8192),
+    });
+  },
+
+  deleteImapAccount: (accountId: string) =>
+    ipcRenderer.invoke("imap-account:delete", {
+      accountId: assertString(accountId, "accountId", 256),
+    }),
+
+  syncImapEmails: (accountId: string) =>
+    ipcRenderer.invoke("imap:sync", {
       accountId: assertString(accountId, "accountId", 256),
     }),
 
