@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useRef, useEffect } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ComposeDraft as Draft } from "../components/email/ComposeDrawer";
 import { toast } from "sonner";
@@ -12,7 +12,7 @@ export function useDraftPersistence(
   params: UseDraftPersistenceParams,
 ): void {
   const { drafts, setDrafts } = params;
-  const [hasLoadedDrafts, setHasLoadedDrafts] = useState(false);
+  const hasLoadedDrafts = useRef(false);
 
   // Load drafts from storage on mount
   useEffect(() => {
@@ -23,25 +23,25 @@ export function useDraftPersistence(
           if (Array.isArray(savedDrafts) && savedDrafts.length > 0) {
             setDrafts(savedDrafts);
           }
-          setHasLoadedDrafts(true);
+          hasLoadedDrafts.current = true;
         })
         .catch((err) => {
           console.error("Failed to load drafts:", err);
-          setHasLoadedDrafts(true);
+          hasLoadedDrafts.current = true;
         });
     } else {
-      setHasLoadedDrafts(true);
+      hasLoadedDrafts.current = true;
     }
   }, [setDrafts]);
 
   // Save drafts whenever they change (only after initial load)
   useEffect(() => {
-    if (!hasLoadedDrafts) return;
+    if (!hasLoadedDrafts.current) return;
 
     if (window.electronAPI?.saveDrafts) {
       window.electronAPI.saveDrafts(drafts);
     }
-  }, [drafts, hasLoadedDrafts]);
+  }, [drafts]);
 
   // Subscribe to draft save failure notifications
   useEffect(() => {
