@@ -569,8 +569,6 @@ const GOOGLE_SCOPE =
   "https://www.googleapis.com/auth/gmail.modify " +
   "https://www.googleapis.com/auth/gmail.send";
 
-// Gmail system labels — defined in gmailSync.ts, imported above
-
 // =============================================================================
 // GOOGLE TOKEN STORAGE
 // =============================================================================
@@ -872,8 +870,6 @@ async function getValidGoogleAccessToken(accountId: string): Promise<string> {
   activeGoogleTokenRefreshPromises.set(accountId, refreshPromise);
   return refreshPromise;
 }
-
-// Gmail API helpers — defined in gmailSync.ts, imported above
 
 function loadAiProviderKeys(): StoredAiProviderKeys {
   try {
