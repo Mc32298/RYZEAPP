@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 export interface UseSessionLockParams {
   sessionLock: boolean;
@@ -44,6 +44,9 @@ export function useSessionLock(params: UseSessionLockParams): {
       if (timeoutId !== undefined) {
         window.clearTimeout(timeoutId);
       }
+      if (throttleTimer !== undefined) {
+        window.clearTimeout(throttleTimer);
+      }
       window.removeEventListener("mousemove", resetLockTimer);
       window.removeEventListener("mousedown", resetLockTimer);
       window.removeEventListener("keydown", resetLockTimer);
@@ -52,5 +55,6 @@ export function useSessionLock(params: UseSessionLockParams): {
     };
   }, [sessionLock]);
 
-  return { isSessionLocked, unlock: () => setIsSessionLocked(false) };
+  const unlock = useCallback(() => setIsSessionLocked(false), []);
+  return { isSessionLocked, unlock };
 }
