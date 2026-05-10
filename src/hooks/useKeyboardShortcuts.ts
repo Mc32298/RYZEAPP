@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import type { EmailThread } from "@/types/email";
 import type { ComposeDraft as Draft } from "@/components/email/ComposeDrawer";
 
@@ -21,13 +22,13 @@ export interface UseKeyboardShortcutsParams {
   handleSelectEmail: (email: EmailThread) => void | Promise<void>;
   handleSnooze: (id: string, snoozedUntilOverride?: string) => Promise<void>;
   handleToggleStar: (id: string) => void;
-  setIsCommandPaletteOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setIsGlobalSearchOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setGlobalSearchDraft: React.Dispatch<React.SetStateAction<string>>;
-  setGlobalSearchSelectedIndex: React.Dispatch<React.SetStateAction<number>>;
-  setIsGlobalSearchActionMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setGlobalSearchActionIndex: React.Dispatch<React.SetStateAction<number>>;
-  setIsCalendarOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  setIsCommandPaletteOpen: Dispatch<SetStateAction<boolean>>;
+  setIsGlobalSearchOpen: Dispatch<SetStateAction<boolean>>;
+  setGlobalSearchDraft: Dispatch<SetStateAction<string>>;
+  setGlobalSearchSelectedIndex: Dispatch<SetStateAction<number>>;
+  setIsGlobalSearchActionMenuOpen: Dispatch<SetStateAction<boolean>>;
+  setGlobalSearchActionIndex: Dispatch<SetStateAction<number>>;
+  setIsCalendarOpen: Dispatch<SetStateAction<boolean>>;
 }
 
 export function useKeyboardShortcuts(params: UseKeyboardShortcutsParams): void {
