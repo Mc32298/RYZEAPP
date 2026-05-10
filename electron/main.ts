@@ -58,6 +58,7 @@ import type {
   GoogleStoredToken,
   StoredImapAccount,
   AccountHealthSnapshot,
+  BackendSettings,
   BackupEnvelope,
   GmailMessageHeader,
   GmailMessagePart,
@@ -799,34 +800,19 @@ function getOllamaConfig() {
   };
 }
 
-function loadBackendSettings() {
+function loadBackendSettings(): BackendSettings {
   try {
     if (!fs.existsSync(settingsFilePath)) {
-      return {} as {
-        aiProvider?: string;
-        geminiModel?: string;
-        ollamaBaseUrl?: string;
-        ollamaModel?: string;
-      };
+      return {} as BackendSettings;
     }
 
     const parsed = JSON.parse(fs.readFileSync(settingsFilePath, "utf8"));
     return typeof parsed === "object" && parsed
-      ? (parsed as {
-          aiProvider?: string;
-          geminiModel?: string;
-          ollamaBaseUrl?: string;
-          ollamaModel?: string;
-        })
+      ? (parsed as BackendSettings)
       : {};
   } catch (error) {
     console.error("Failed to load backend settings:", error);
-    return {} as {
-      aiProvider?: string;
-      geminiModel?: string;
-      ollamaBaseUrl?: string;
-      ollamaModel?: string;
-    };
+    return {} as BackendSettings;
   }
 }
 function getGeminiApiVersion() {

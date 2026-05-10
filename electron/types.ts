@@ -89,16 +89,18 @@ export interface AccountHealthSnapshot {
   storageBytes: number;
 }
 
+export interface BackendSettings {
+  aiProvider?: string;
+  geminiModel?: string;
+  ollamaBaseUrl?: string;
+  ollamaModel?: string;
+}
+
 export interface BackupEnvelope {
   version: 1;
   createdAt: string;
   data: {
-    settings: {
-      aiProvider?: string;
-      geminiModel?: string;
-      ollamaBaseUrl?: string;
-      ollamaModel?: string;
-    };
+    settings: BackendSettings;
     folders: any[];
     emails: any[];
     labels: any[];
