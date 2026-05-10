@@ -46,6 +46,29 @@ import crypto from "crypto"; // Used for PKCE code verifier / challenge generati
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
 import { parseStoredAttachments, shouldUseLocalMessageBody } from "./mailBodyCache";
+import type {
+  EmailLabel,
+  GraphMailFolder,
+  AiProvider,
+  StoredAiProviderKey,
+  StoredAiProviderKeys,
+  GraphMailFolderListResponse,
+  MicrosoftOAuthEnv,
+  MicrosoftStoredToken,
+  GoogleStoredToken,
+  StoredImapAccount,
+  AccountHealthSnapshot,
+  BackupEnvelope,
+  GmailMessageHeader,
+  GmailMessagePart,
+  GmailMessage,
+  GmailMessageListResponse,
+  GraphMessageAddress,
+  GraphMessage,
+  GraphMessageListResponse,
+  FolderSyncResult,
+  GraphFolderKey,
+} from "./types";
 
 // =============================================================================
 // ELECTRON SETUP
@@ -230,176 +253,8 @@ const imapAccountsFilePath = path.join(
 );
 
 // =============================================================================
-// TYPES & INTERFACES
+// TYPES & INTERFACES — moved to ./types.ts
 // =============================================================================
-
-interface EmailLabel {
-  id: string;
-  accountId: string;
-  name: string;
-  color: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface GraphMailFolder {
-  id: string;
-  displayName: string;
-  parentFolderId?: string;
-  wellKnownName?: string;
-  totalItemCount?: number;
-  unreadItemCount?: number;
-  depth?: number;
-  path?: string;
-}
-
-type AiProvider = "gemini";
-
-interface StoredAiProviderKey {
-  apiKey: string;
-  updatedAt: string;
-}
-
-type StoredAiProviderKeys = Partial<Record<AiProvider, StoredAiProviderKey>>;
-
-interface GraphMailFolderListResponse {
-  value: GraphMailFolder[];
-}
-
-interface MicrosoftOAuthEnv {
-  clientId: string;
-  tenantId: string;
-  redirectUri: string;
-  scope: string;
-}
-
-interface MicrosoftStoredToken {
-  accountId: string;
-  provider: "microsoft";
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt: number;
-  scope: string;
-  tokenType: string;
-  clientId?: string;
-  tenantId?: string;
-  redirectUri?: string;
-  oauthScope?: string;
-}
-
-interface GoogleStoredToken {
-  accountId: string;
-  provider: "google";
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt: number;
-  scope: string;
-  tokenType: string;
-  clientId?: string;
-  oauthScope?: string;
-}
-
-interface StoredImapAccount extends ImapConnectionConfig {
-  accountId: string;
-  provider: "imap";
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface AccountHealthSnapshot {
-  accountId: string;
-  provider: "microsoft" | "google" | "imap";
-  syncStatus: "ok" | "warning" | "idle";
-  tokenStatus: "ok" | "expiring" | "expired" | "n/a";
-  tokenExpiresAt: string | null;
-  lastSyncAt: string | null;
-  folderErrors: number;
-  storageBytes: number;
-}
-
-interface BackupEnvelope {
-  version: 1;
-  createdAt: string;
-  data: {
-    settings: ReturnType<typeof loadBackendSettings>;
-    folders: any[];
-    emails: any[];
-    labels: any[];
-    emailLabels: any[];
-    folderSyncState: any[];
-  };
-}
-
-interface GmailMessageHeader {
-  name: string;
-  value: string;
-}
-
-interface GmailMessagePart {
-  mimeType?: string;
-  body?: { data?: string; size?: number };
-  parts?: GmailMessagePart[];
-}
-
-interface GmailMessage {
-  id: string;
-  threadId?: string;
-  labelIds?: string[];
-  snippet?: string;
-  payload?: {
-    headers?: GmailMessageHeader[];
-    body?: { data?: string };
-    parts?: GmailMessagePart[];
-  };
-}
-
-interface GmailMessageListResponse {
-  messages?: Array<{ id: string; threadId: string }>;
-  nextPageToken?: string;
-  resultSizeEstimate?: number;
-}
-
-interface GraphMessageAddress {
-  emailAddress?: {
-    name?: string;
-    address?: string;
-  };
-}
-
-interface GraphMessage {
-  id: string;
-  subject?: string;
-  bodyPreview?: string;
-  body?: {
-    contentType?: "text" | "html";
-    content?: string;
-  };
-  receivedDateTime?: string;
-  isRead?: boolean;
-  hasAttachments?: boolean;
-  from?: GraphMessageAddress;
-  sender?: GraphMessageAddress;
-  toRecipients?: GraphMessageAddress[];
-  ccRecipients?: GraphMessageAddress[];
-  snoozedUntil?: string | null;
-  "@removed"?: {
-    reason?: string;
-  };
-}
-
-interface GraphMessageListResponse {
-  value: GraphMessage[];
-  "@odata.nextLink"?: string;
-  "@odata.deltaLink"?: string;
-}
-
-type FolderSyncResult = {
-  success: boolean;
-  syncedCount?: number;
-  updatedCount?: number;
-  deletedCount?: number;
-  deltaLink?: string;
-};
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -434,13 +289,6 @@ const tokenRefreshLeadMs = 60 * 1000;
 const maxGraphFetchAttempts = 4;
 
 /** Well-known Microsoft Graph folder keys that are valid move destinations */
-type GraphFolderKey =
-  | "inbox"
-  | "sentitems"
-  | "drafts"
-  | "archive"
-  | "deleteditems";
-
 const allowedMoveDestinations = new Set<GraphFolderKey>([
   "inbox",
   "sentitems",
@@ -1576,15 +1424,15 @@ function saveMicrosoftTokens(tokens: Record<string, MicrosoftStoredToken>) {
 
 // =============================================================================
 // GOOGLE OAUTH CONFIG
-// Client ID for the desktop app. For native apps this is not a secret.
+// Credentials are baked into the bundle at build time from .env via vite.config.ts.
 // =============================================================================
 
-const GOOGLE_CLIENT_ID =
-  "224714941754-dmhs2n3lmljpgajk3qak2glsoqdtl6ea.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
 
-const GOOGLE_CLIENT_SECRET = "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";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET || "";
 
-const GOOGLE_REDIRECT_URI = "http://localhost:53682";
+const GOOGLE_REDIRECT_URI =
+  process.env.GOOGLE_OAUTH_REDIRECT_URI || "http://127.0.0.1:53682";
 
 const GOOGLE_SCOPE =
   "openid email profile " +
