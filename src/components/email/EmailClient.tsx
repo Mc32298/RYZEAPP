@@ -1,4 +1,5 @@
 import { CalendarSidebar } from "./CalendarSidebar";
+import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import DOMPurify from "dompurify";
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -3082,156 +3083,7 @@ export function EmailClient() {
     return () => window.clearTimeout(timer);
   }, [isGlobalSearchOpen]);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (isSessionLocked) return;
-
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setIsCommandPaletteOpen((prev) => !prev);
-        return;
-      }
-
-      if (isCommandPaletteOpen) {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          setIsCommandPaletteOpen(false);
-        }
-        return;
-      }
-
-      if (isGlobalSearchOpen) {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          setIsGlobalSearchOpen(false);
-        }
-        return;
-      }
-
-      if (event.shiftKey && event.code === "Space") {
-        event.preventDefault();
-        setGlobalSearchDraft(searchQuery);
-        setGlobalSearchSelectedIndex(0);
-        setIsGlobalSearchActionMenuOpen(false);
-        setGlobalSearchActionIndex(0);
-        setIsGlobalSearchOpen(true);
-        return;
-      }
-
-      const target = event.target as HTMLElement;
-      const isInInput =
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable;
-      if (isInInput) return;
-
-      switch (event.key) {
-        case "t":
-        case "T":
-          event.preventDefault();
-          setIsCalendarOpen((prev) => !prev);
-          break;
-        case "c":
-        case "C":
-          event.preventDefault();
-          handleCompose();
-          break;
-        case "r":
-        case "R":
-          event.preventDefault();
-          handleReply();
-          break;
-        case "e":
-        case "E":
-        case "a":
-        case "A":
-          if (selectedEmailId) {
-            event.preventDefault();
-            handleArchive(selectedEmailId);
-          }
-          break;
-        case "d":
-        case "D":
-        case "Delete":
-        case "Backspace":
-          if (selectedEmailId) {
-            event.preventDefault();
-            handleDelete(selectedEmailId);
-          }
-          break;
-        case "s":
-        case "S":
-          if (selectedEmailId) {
-            event.preventDefault();
-            handleToggleStar(selectedEmailId);
-          }
-          break;
-        case "u":
-        case "U":
-          if (selectedEmailId) {
-            event.preventDefault();
-            const selected = emails.find((email) => email.id === selectedEmailId);
-            if (selected?.isRead) {
-              handleMarkUnread(selectedEmailId);
-            } else {
-              handleMarkRead(selectedEmailId);
-            }
-          }
-          break;
-        case "l":
-        case "L":
-          event.preventDefault();
-          handleQuickApplyLabel();
-          break;
-        case "m":
-        case "M":
-          event.preventDefault();
-          handleQuickMove();
-          break;
-        case "z":
-        case "Z":
-          if (selectedEmailId) {
-            event.preventDefault();
-            void handleSnooze(selectedEmailId);
-          }
-          break;
-        case "n":
-        case "N": {
-          event.preventDefault();
-          const unread = folderEmails.filter((email) => !email.isRead);
-          if (unread.length === 0) break;
-          const currentIndex = unread.findIndex(
-            (email) => email.id === selectedEmailId,
-          );
-          const nextUnread = unread[currentIndex + 1] ?? unread[0];
-          if (nextUnread) void handleSelectEmail(nextUnread);
-          break;
-        }
-        case "ArrowDown": {
-          event.preventDefault();
-          const idx = folderEmails.findIndex(
-            (email) => email.id === selectedEmailId,
-          );
-          const next = folderEmails[idx + 1] ?? folderEmails[0];
-          if (next) handleSelectEmail(next);
-          break;
-        }
-        case "ArrowUp": {
-          event.preventDefault();
-          const idx = folderEmails.findIndex(
-            (email) => email.id === selectedEmailId,
-          );
-          const prev =
-            folderEmails[idx - 1] ?? folderEmails[folderEmails.length - 1];
-          if (prev) handleSelectEmail(prev);
-          break;
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
+  useKeyboardShortcuts({
     isSessionLocked,
     isCommandPaletteOpen,
     isGlobalSearchOpen,
@@ -3250,7 +3102,14 @@ export function EmailClient() {
     handleSelectEmail,
     handleSnooze,
     handleToggleStar,
-  ]);
+    setIsCommandPaletteOpen,
+    setIsGlobalSearchOpen,
+    setGlobalSearchDraft,
+    setGlobalSearchSelectedIndex,
+    setIsGlobalSearchActionMenuOpen,
+    setGlobalSearchActionIndex,
+    setIsCalendarOpen,
+  });
 
   const appStyle = {
     backgroundColor: "var(--bg-0)",
