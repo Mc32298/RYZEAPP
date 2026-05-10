@@ -1,5 +1,6 @@
 import { CalendarSidebar } from "./CalendarSidebar";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
+import { useSessionLock } from "../../hooks/useSessionLock";
 import DOMPurify from "dompurify";
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -489,7 +490,6 @@ export function EmailClient() {
   const [dbStorageGB, setDbStorageGB] = useState<number>(0);
   const [isAppLoaded, setIsAppLoaded] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isSessionLocked, setIsSessionLocked] = useState(false);
   const [isConnectingMicrosoft, setIsConnectingMicrosoft] = useState(false);
   const [connectMicrosoftError, setConnectMicrosoftError] = useState<
     string | null
@@ -669,46 +669,9 @@ export function EmailClient() {
     }
   }, [settings.desktopAlerts]);
 
-  useEffect(() => {
-    if (!settings.sessionLock) {
-      setIsSessionLocked(false);
-      return;
-    }
-
-    let timeoutId: number | undefined;
-    let throttleTimer: number | undefined;
-
-    const resetLockTimer = () => {
-      if (throttleTimer) return;
-
-      throttleTimer = window.setTimeout(() => {
-        throttleTimer = undefined;
-      }, 1000);
-
-      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-      timeoutId = window.setTimeout(() => setIsSessionLocked(true), 45_000);
-    };
-
-    const handleBlur = () => setIsSessionLocked(true);
-
-    resetLockTimer();
-    window.addEventListener("mousemove", resetLockTimer);
-    window.addEventListener("mousedown", resetLockTimer);
-    window.addEventListener("keydown", resetLockTimer);
-    window.addEventListener("touchstart", resetLockTimer);
-    window.addEventListener("blur", handleBlur);
-
-    return () => {
-      if (timeoutId !== undefined) {
-        window.clearTimeout(timeoutId);
-      }
-      window.removeEventListener("mousemove", resetLockTimer);
-      window.removeEventListener("mousedown", resetLockTimer);
-      window.removeEventListener("keydown", resetLockTimer);
-      window.removeEventListener("touchstart", resetLockTimer);
-      window.removeEventListener("blur", handleBlur);
-    };
-  }, [settings.sessionLock]);
+  const { isSessionLocked, unlock: unlockSession } = useSessionLock({
+    sessionLock: settings.sessionLock,
+  });
 
   useEffect(() => {
     if (
@@ -3786,7 +3749,7 @@ export function EmailClient() {
               The inbox paused after inactivity. Resume when you are ready.
             </p>
             <button
-              onClick={() => setIsSessionLocked(false)}
+              onClick={unlockSession}
               className="mt-5 rounded-[var(--radius-ryze-md)] bg-[var(--ryze-accent)] px-4 py-2 text-[13px] font-medium text-[var(--ryze-accent-fg)] transition-colors hover:bg-[var(--ryze-accent-hover)]"
             >
               Resume session
