@@ -46,6 +46,7 @@ import crypto from "crypto"; // Used for PKCE code verifier / challenge generati
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
 import { parseStoredAttachments, shouldUseLocalMessageBody } from "./mailBodyCache";
+import { sleep, getGraphRetryDelayMs } from "./utils";
 import type {
   EmailLabel,
   GraphMailFolder,
@@ -257,22 +258,6 @@ const imapAccountsFilePath = path.join(
 // TYPES & INTERFACES — moved to ./types.ts
 // =============================================================================
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getGraphRetryDelayMs(response: Response, attempt: number) {
-  const retryAfterHeader = response.headers.get("retry-after");
-  const retryAfterSeconds = retryAfterHeader
-    ? Number.parseInt(retryAfterHeader, 10)
-    : NaN;
-
-  if (Number.isFinite(retryAfterSeconds)) {
-    return Math.max(retryAfterSeconds, 1) * 1000;
-  }
-
-  return Math.min(30_000, attempt * 5000);
-}
 
 // =============================================================================
 // CONSTANTS
