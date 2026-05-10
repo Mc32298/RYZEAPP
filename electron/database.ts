@@ -96,7 +96,13 @@ CREATE INDEX IF NOT EXISTS idx_folder_sync_state_account
 ON folder_sync_state(accountId);
 `);
 
-const ALLOWED_MIGRATION_TABLES = new Set(["emails", "folders", "labels", "email_labels"]);
+const ALLOWED_MIGRATION_TABLES = new Set([
+  "folders",
+  "emails",
+  "labels",
+  "email_labels",
+  "folder_sync_state",
+]);
 const SAFE_IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const SAFE_COLUMN_DEF_RE = /^[A-Z]+(\s+DEFAULT\s+('[^']*'|\d+))?$/i;
 
