@@ -1,6 +1,7 @@
 import { CalendarSidebar } from "./CalendarSidebar";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { useSessionLock } from "../../hooks/useSessionLock";
+import { useDraftPersistence } from "../../hooks/useDraftPersistence";
 import DOMPurify from "dompurify";
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -481,7 +482,6 @@ export function EmailClient() {
   const [senderTrustRevision, setSenderTrustRevision] = useState(0);
   const globalSearchRef = React.useRef<HTMLInputElement>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
-  const [hasLoadedDrafts, setHasLoadedDrafts] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>(loadStoredAccounts);
   const [currentAccountId, setCurrentAccountId] = useState(
     () => loadStoredAccounts()[0]?.id ?? DEFAULT_PRIMARY_ACCOUNT.id,
@@ -589,40 +589,7 @@ export function EmailClient() {
     setSelectedEmailId(null);
   }, [mailFolders, activeFolder]);
 
-  useEffect(() => {
-    if (window.electronAPI?.getDrafts) {
-      window.electronAPI
-        .getDrafts()
-        .then((savedDrafts) => {
-          if (Array.isArray(savedDrafts) && savedDrafts.length > 0) {
-            setDrafts(savedDrafts);
-          }
-          setHasLoadedDrafts(true);
-        })
-        .catch((err) => {
-          console.error("Failed to load drafts:", err);
-          setHasLoadedDrafts(true);
-        });
-    } else {
-      setHasLoadedDrafts(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!hasLoadedDrafts) return;
-
-    if (window.electronAPI?.saveDrafts) {
-      window.electronAPI.saveDrafts(drafts);
-    }
-  }, [drafts, hasLoadedDrafts]);
-
-  useEffect(() => {
-    if (!window.electronAPI?.onDraftsSaveFailed) return;
-    window.electronAPI.onDraftsSaveFailed((message: string) => {
-      toast.warning(message, { duration: 6000 });
-    });
-    return () => window.electronAPI?.removeDraftsListeners?.();
-  }, []);
+  useDraftPersistence({ drafts, setDrafts });
 
   const currentAccount =
     accounts.find((account) => account.id === currentAccountId) ??
