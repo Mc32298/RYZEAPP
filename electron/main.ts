@@ -37,9 +37,7 @@ import {
   type LocalImapMessageRow,
 } from "./imapSync";
 import {
-  buildGoogleAuthorizationCodeParams,
   buildGoogleTokenExchangeDebugContext,
-  buildGoogleRefreshTokenParams,
   formatGoogleTokenExchangeError,
 } from "./googleOAuth";
 import crypto from "crypto"; // Used for PKCE code verifier / challenge generation
@@ -203,6 +201,17 @@ const maxGraphFetchAttempts = 4;
 
 /** Refresh the access token this many ms before it actually expires (1 minute early) */
 const tokenRefreshLeadMs = 60 * 1000;
+
+function logProviderFailure(context: string, status: number, errorText: string) {
+  console.error(`${context} failed`, {
+    status,
+    errorSnippet: errorText.slice(0, 512),
+  });
+}
+
+function userSafeProviderError(context: string, status: number) {
+  return `${context} failed (${status}).`;
+}
 
 
 // =============================================================================
@@ -557,8 +566,8 @@ function saveMicrosoftTokens(tokens: Record<string, MicrosoftStoredToken>) {
 // =============================================================================
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
-
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET || "";
+const GOOGLE_TOKEN_PROXY_URL = process.env.GOOGLE_OAUTH_TOKEN_PROXY_URL || "";
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
 
 const GOOGLE_REDIRECT_URI =
   process.env.GOOGLE_OAUTH_REDIRECT_URI || "http://127.0.0.1:53682";
@@ -568,6 +577,96 @@ const GOOGLE_SCOPE =
   "https://www.googleapis.com/auth/gmail.readonly " +
   "https://www.googleapis.com/auth/gmail.modify " +
   "https://www.googleapis.com/auth/gmail.send";
+
+function getGoogleTokenProxyUrl() {
+  const value = GOOGLE_TOKEN_PROXY_URL.trim();
+  if (!value) {
+    throw new Error(
+      "Missing GOOGLE_OAUTH_TOKEN_PROXY_URL. Configure your Supabase Edge Function endpoint.",
+    );
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("GOOGLE_OAUTH_TOKEN_PROXY_URL is not a valid URL.");
+  }
+
+  const isLocalhost =
+    parsed.hostname === "localhost" ||
+    parsed.hostname === "127.0.0.1" ||
+    parsed.hostname === "::1";
+
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLocalhost)) {
+    throw new Error(
+      "GOOGLE_OAUTH_TOKEN_PROXY_URL must be https (or localhost http for development).",
+    );
+  }
+
+  return parsed.toString();
+}
+
+type GoogleTokenProxyRequest =
+  | {
+      grantType: "authorization_code";
+      clientId: string;
+      code: string;
+      codeVerifier: string;
+      redirectUri: string;
+    }
+  | {
+      grantType: "refresh_token";
+      clientId: string;
+      refreshToken: string;
+    };
+
+async function exchangeGoogleTokenViaProxy(request: GoogleTokenProxyRequest) {
+  const proxyUrl = getGoogleTokenProxyUrl();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  const anonKey = SUPABASE_ANON_KEY.trim();
+  if (anonKey) {
+    headers.apikey = anonKey;
+    headers.Authorization = `Bearer ${anonKey}`;
+  }
+
+  const response = await fetch(proxyUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(request),
+  });
+
+  const responseText = await response.text();
+
+  if (!response.ok) {
+    const debugContext = buildGoogleTokenExchangeDebugContext({
+      clientId: request.clientId,
+      redirectUri:
+        request.grantType === "authorization_code"
+          ? request.redirectUri
+          : GOOGLE_REDIRECT_URI,
+    });
+    logProviderFailure("Google token exchange", response.status, responseText);
+    throw new Error(
+      formatGoogleTokenExchangeError(response.status, responseText, debugContext),
+    );
+  }
+
+  try {
+    return JSON.parse(responseText) as {
+      access_token: string;
+      refresh_token?: string;
+      expires_in: number;
+      scope?: string;
+      token_type: string;
+    };
+  } catch {
+    throw new Error("Google token proxy returned invalid JSON.");
+  }
+}
 
 // =============================================================================
 // GOOGLE TOKEN STORAGE
@@ -827,29 +926,11 @@ async function getValidGoogleAccessToken(accountId: string): Promise<string> {
   const refreshPromise = (async () => {
     try {
       const clientId = token.clientId || GOOGLE_CLIENT_ID;
-      const params = buildGoogleRefreshTokenParams({
+      const refreshed = await exchangeGoogleTokenViaProxy({
+        grantType: "refresh_token",
         clientId,
-        clientSecret: GOOGLE_CLIENT_SECRET,
         refreshToken: token.refreshToken!,
       });
-
-      const response = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params.toString(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(formatGoogleTokenExchangeError(response.status, errorText));
-      }
-
-      const refreshed = (await response.json()) as {
-        access_token: string;
-        expires_in: number;
-        scope?: string;
-        token_type: string;
-      };
 
       const latestTokens = loadGoogleTokens();
       latestTokens[accountId] = {
@@ -1655,8 +1736,8 @@ ipcMain.handle("microsoft-calendar:get-events", async (_event, payload) => {
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error("Failed to fetch calendar:", errorText);
-    throw new Error(`Failed to fetch calendar events: ${errorText}`);
+    logProviderFailure("Calendar fetch", response.status, errorText);
+    throw new Error(userSafeProviderError("Calendar fetch", response.status));
   }
 
   const data = await response.json();
@@ -1724,7 +1805,10 @@ ipcMain.handle("microsoft-mail:download-attachment", async (event, payload) => {
 
   if (!successAttempt) {
     const failure = secondAttempt || firstAttempt;
-    throw new Error(`Failed to download attachment: ${failure.errorText}`);
+    logProviderFailure("Attachment download", failure.status, failure.errorText);
+    throw new Error(
+      userSafeProviderError("Attachment download", failure.status),
+    );
   }
 
   // 3. Write the bytes to the user's chosen location
@@ -1769,7 +1853,8 @@ ipcMain.handle("microsoft-mail:toggle-star", async (_event, payload) => {
       );
       return { success: false, missing: true };
     }
-    throw new Error(`Failed to toggle star: ${errorText}`);
+    logProviderFailure("Toggle star", response.status, errorText);
+    throw new Error(userSafeProviderError("Toggle star", response.status));
   }
 
   db.prepare(
@@ -2679,48 +2764,14 @@ ipcMain.handle("google-oauth:connect", async () => {
     });
   });
 
-  // Exchange auth code for tokens
-  const tokenParams = buildGoogleAuthorizationCodeParams({
+  // Exchange auth code for tokens via Supabase Edge Function proxy.
+  const tokenPayload = await exchangeGoogleTokenViaProxy({
+    grantType: "authorization_code",
     clientId: GOOGLE_CLIENT_ID,
-    clientSecret: GOOGLE_CLIENT_SECRET,
     code: authCode,
-    redirectUri: GOOGLE_REDIRECT_URI,
     codeVerifier: verifier,
+    redirectUri: GOOGLE_REDIRECT_URI,
   });
-
-  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: tokenParams.toString(),
-  });
-
-  if (!tokenResponse.ok) {
-    const errorText = await tokenResponse.text();
-    const debugContext = buildGoogleTokenExchangeDebugContext({
-      clientId: GOOGLE_CLIENT_ID,
-      redirectUri: GOOGLE_REDIRECT_URI,
-    });
-    console.error("[google-oauth] token exchange failed", {
-      status: tokenResponse.status,
-      errorText,
-      ...debugContext,
-    });
-    throw new Error(
-      formatGoogleTokenExchangeError(
-        tokenResponse.status,
-        errorText,
-        debugContext,
-      ),
-    );
-  }
-
-  const tokenPayload = (await tokenResponse.json()) as {
-    access_token: string;
-    refresh_token?: string;
-    expires_in: number;
-    scope: string;
-    token_type: string;
-  };
 
   // Fetch user profile
   const profileResponse = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
@@ -2729,7 +2780,10 @@ ipcMain.handle("google-oauth:connect", async () => {
 
   if (!profileResponse.ok) {
     const errorText = await profileResponse.text();
-    throw new Error(`Google profile request failed (${profileResponse.status}): ${errorText}`);
+    logProviderFailure("Google profile request", profileResponse.status, errorText);
+    throw new Error(
+      userSafeProviderError("Google profile request", profileResponse.status),
+    );
   }
 
   const profile = (await profileResponse.json()) as {
@@ -2749,7 +2803,7 @@ ipcMain.handle("google-oauth:connect", async () => {
     accessToken: tokenPayload.access_token,
     refreshToken: tokenPayload.refresh_token,
     expiresAt: Date.now() + tokenPayload.expires_in * 1000,
-    scope: tokenPayload.scope,
+    scope: tokenPayload.scope || GOOGLE_SCOPE,
     tokenType: tokenPayload.token_type,
     clientId: GOOGLE_CLIENT_ID,
     oauthScope: GOOGLE_SCOPE,
@@ -3091,7 +3145,8 @@ ipcMain.handle("microsoft-mail:send", async (_event, payload) => {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Failed to send email: ${errorText}`);
+    logProviderFailure("Microsoft send mail", response.status, errorText);
+    throw new Error(userSafeProviderError("Microsoft send mail", response.status));
   }
 
   return { success: true };
@@ -3119,7 +3174,8 @@ ipcMain.handle("microsoft-mail:reply", async (_event, payload) => {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Failed to reply to email: ${errorText}`);
+    logProviderFailure("Microsoft reply mail", response.status, errorText);
+    throw new Error(userSafeProviderError("Microsoft reply mail", response.status));
   }
 
   return { success: true };
@@ -3250,7 +3306,8 @@ ipcMain.handle("microsoft-mail:mark-read", async (_event, payload) => {
       );
       return { success: false, missing: true };
     }
-    throw new Error(`Failed to mark message as read: ${errorText}`);
+    logProviderFailure("Mark as read", response.status, errorText);
+    throw new Error(userSafeProviderError("Mark as read", response.status));
   }
 
   return { success: true };
@@ -3285,7 +3342,8 @@ ipcMain.handle("microsoft-mail:mark-unread", async (_event, payload) => {
       );
       return { success: false, missing: true };
     }
-    throw new Error(`Failed to mark message as unread: ${errorText}`);
+    logProviderFailure("Mark as unread", response.status, errorText);
+    throw new Error(userSafeProviderError("Mark as unread", response.status));
   }
 
   db.prepare("UPDATE emails SET isRead = 0 WHERE accountId = ? AND id = ?").run(
@@ -3784,7 +3842,8 @@ ipcMain.handle("microsoft-mail:move", async (_event, payload) => {
           "Message was not found on the server. Local stale copy was removed.",
       };
     }
-    throw new Error(`Failed to move message on server: ${errorText}`);
+    logProviderFailure("Move message", response.status, errorText);
+    throw new Error(userSafeProviderError("Move message", response.status));
   }
 
   const data = await response.json();

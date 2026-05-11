@@ -41,11 +41,14 @@ export default defineConfig(({ mode }) => {
     "process.env.GOOGLE_OAUTH_CLIENT_ID": JSON.stringify(
       env.GOOGLE_OAUTH_CLIENT_ID || ""
     ),
-    "process.env.GOOGLE_OAUTH_CLIENT_SECRET": JSON.stringify(
-      env.GOOGLE_OAUTH_CLIENT_SECRET || ""
-    ),
     "process.env.GOOGLE_OAUTH_REDIRECT_URI": JSON.stringify(
       env.GOOGLE_OAUTH_REDIRECT_URI || "http://127.0.0.1:53682"
+    ),
+    "process.env.GOOGLE_OAUTH_TOKEN_PROXY_URL": JSON.stringify(
+      env.GOOGLE_OAUTH_TOKEN_PROXY_URL || ""
+    ),
+    "process.env.SUPABASE_ANON_KEY": JSON.stringify(
+      env.SUPABASE_ANON_KEY || ""
     ),
   };
 
