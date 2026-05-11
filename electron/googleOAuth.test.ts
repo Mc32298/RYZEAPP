@@ -5,6 +5,7 @@ import {
   buildGoogleTokenExchangeDebugContext,
   buildGoogleRefreshTokenParams,
   formatGoogleTokenExchangeError,
+  isGoogleUnauthorizedClientError,
 } from "./googleOAuth";
 
 describe("googleOAuth", () => {
@@ -57,6 +58,21 @@ describe("googleOAuth", () => {
     ).toContain("Invalid parameter value for redirect_uri");
   });
 
+  it("formats oauth client mismatch errors from the token proxy", () => {
+    expect(
+      formatGoogleTokenExchangeError(
+        400,
+        JSON.stringify({
+          error: "oauth_client_mismatch",
+          error_description:
+            "Desktop GOOGLE_OAUTH_CLIENT_ID does not match Supabase function GOOGLE_OAUTH_CLIENT_ID.",
+          desktopClientIdSuffix: "desktop.apps.googleusercontent.com",
+          functionClientIdSuffix: "function.apps.googleusercontent.com",
+        }),
+      ),
+    ).toContain("do not match");
+  });
+
   it("builds a safe debug context without secrets", () => {
     expect(
       buildGoogleTokenExchangeDebugContext({
@@ -68,5 +84,27 @@ describe("googleOAuth", () => {
       redirectUri: "http://127.0.0.1:53682",
       usesPkce: true,
     });
+  });
+
+  it("detects unauthorized_client responses", () => {
+    expect(
+      isGoogleUnauthorizedClientError(
+        JSON.stringify({
+          error: "unauthorized_client",
+          error_description: "Unauthorized",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag non-authorization failures as unauthorized_client", () => {
+    expect(
+      isGoogleUnauthorizedClientError(
+        JSON.stringify({
+          error: "invalid_grant",
+          error_description: "Token has been expired or revoked.",
+        }),
+      ),
+    ).toBe(false);
   });
 });

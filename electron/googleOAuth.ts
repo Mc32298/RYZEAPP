@@ -17,6 +17,21 @@ interface GoogleTokenExchangeDebugContextArgs {
   redirectUri: string;
 }
 
+interface GoogleTokenErrorPayload {
+  error?: string;
+  error_description?: string;
+  desktopClientIdSuffix?: string;
+  functionClientIdSuffix?: string;
+}
+
+function parseGoogleTokenErrorPayload(errorText: string): GoogleTokenErrorPayload {
+  try {
+    return JSON.parse(errorText) as GoogleTokenErrorPayload;
+  } catch {
+    return {};
+  }
+}
+
 export function buildGoogleAuthorizationCodeParams(
   args: GoogleAuthorizationCodeParamsArgs,
 ) {
@@ -71,16 +86,18 @@ export function formatGoogleTokenExchangeError(
   },
 ) {
   const normalized = errorText.toLowerCase();
-  let parsedErrorDescription = "";
+  const parsed = parseGoogleTokenErrorPayload(errorText);
+  const parsedErrorDescription = parsed.error_description?.trim() || "";
+  const parsedError = parsed.error?.trim().toLowerCase() || "";
 
-  try {
-    const parsed = JSON.parse(errorText) as {
-      error?: string;
-      error_description?: string;
-    };
-    parsedErrorDescription = parsed.error_description?.trim() || "";
-  } catch {
-    parsedErrorDescription = "";
+  if (parsedError === "oauth_client_mismatch") {
+    return [
+      `Google token exchange failed (${status}): desktop and token-proxy Google OAuth client IDs do not match.`,
+      parsed.desktopClientIdSuffix && parsed.functionClientIdSuffix
+        ? `Desktop suffix=${parsed.desktopClientIdSuffix}, proxy suffix=${parsed.functionClientIdSuffix}.`
+        : "",
+      "Set the same GOOGLE_OAUTH_CLIENT_ID in both the desktop app and Supabase function secrets, then reconnect the Google account.",
+    ].join(" ");
   }
 
   if (
@@ -90,6 +107,20 @@ export function formatGoogleTokenExchangeError(
     return [
       `Google token exchange failed (${status}): the bundled Google client ID is not valid for a desktop PKCE flow.`,
       "Replace it with a Google OAuth client of type Desktop app that is configured for this Electron app's loopback redirect URI.",
+      debugContext
+        ? `Debug: clientIdSuffix=${debugContext.clientIdSuffix}, redirectUri=${debugContext.redirectUri}, usesPkce=${String(debugContext.usesPkce)}.`
+        : "",
+    ].join(" ");
+  }
+
+  if (
+    normalized.includes("\"error\":\"unauthorized_client\"") ||
+    parsedErrorDescription.toLowerCase().includes("unauthorized")
+  ) {
+    return [
+      `Google token exchange failed (${status}): unauthorized client credentials for this token.`,
+      "The refresh token is usually tied to a different Google OAuth client, or the client ID/secret pair is mismatched.",
+      "Reconnect the Google account after confirming GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are from the same OAuth client in Google Cloud Console.",
       debugContext
         ? `Debug: clientIdSuffix=${debugContext.clientIdSuffix}, redirectUri=${debugContext.redirectUri}, usesPkce=${String(debugContext.usesPkce)}.`
         : "",
@@ -111,4 +142,17 @@ export function formatGoogleTokenExchangeError(
       ? `Debug: clientIdSuffix=${debugContext.clientIdSuffix}, redirectUri=${debugContext.redirectUri}, usesPkce=${String(debugContext.usesPkce)}.`
       : "",
   ].join(" ");
+}
+
+export function isGoogleUnauthorizedClientError(errorText: string) {
+  const normalized = errorText.toLowerCase();
+  const parsed = parseGoogleTokenErrorPayload(errorText);
+  const parsedError = parsed.error?.toLowerCase() || "";
+  const parsedErrorDescription = parsed.error_description?.toLowerCase() || "";
+
+  return (
+    normalized.includes("\"error\":\"unauthorized_client\"") ||
+    parsedError === "unauthorized_client" ||
+    parsedErrorDescription.includes("unauthorized")
+  );
 }

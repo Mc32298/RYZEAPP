@@ -45,8 +45,18 @@ serve(async (req) => {
     return json(500, { error: "google_oauth_not_configured" });
   }
 
-  if (payload.clientId !== configuredClientId) {
-    return json(400, { error: "invalid_client_id" });
+  if (!payload.clientId?.trim()) {
+    return json(400, { error: "missing_client_id" });
+  }
+
+  if (payload.clientId.trim() !== configuredClientId) {
+    return json(400, {
+      error: "oauth_client_mismatch",
+      error_description:
+        "Desktop GOOGLE_OAUTH_CLIENT_ID does not match Supabase function GOOGLE_OAUTH_CLIENT_ID.",
+      desktopClientIdSuffix: payload.clientId.trim().slice(-32),
+      functionClientIdSuffix: configuredClientId.slice(-32),
+    });
   }
 
   const params = new URLSearchParams({

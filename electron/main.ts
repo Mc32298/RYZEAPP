@@ -39,6 +39,7 @@ import {
 import {
   buildGoogleTokenExchangeDebugContext,
   formatGoogleTokenExchangeError,
+  isGoogleUnauthorizedClientError,
 } from "./googleOAuth";
 import crypto from "crypto"; // Used for PKCE code verifier / challenge generation
 import { fileURLToPath } from "url";
@@ -579,18 +580,24 @@ const GOOGLE_SCOPE =
   "https://www.googleapis.com/auth/gmail.send";
 
 function getGoogleTokenProxyUrl() {
-  const value = GOOGLE_TOKEN_PROXY_URL.trim();
-  if (!value) {
+  const rawValue = GOOGLE_TOKEN_PROXY_URL.trim();
+  if (!rawValue) {
     throw new Error(
       "Missing GOOGLE_OAUTH_TOKEN_PROXY_URL. Configure your Supabase Edge Function endpoint.",
     );
   }
 
+  const value = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(rawValue)
+    ? rawValue
+    : `https://${rawValue}`;
+
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
-    throw new Error("GOOGLE_OAUTH_TOKEN_PROXY_URL is not a valid URL.");
+    throw new Error(
+      `GOOGLE_OAUTH_TOKEN_PROXY_URL is not a valid URL: "${rawValue}".`,
+    );
   }
 
   const isLocalhost =
@@ -630,7 +637,11 @@ async function exchangeGoogleTokenViaProxy(request: GoogleTokenProxyRequest) {
   const anonKey = SUPABASE_ANON_KEY.trim();
   if (anonKey) {
     headers.apikey = anonKey;
-    headers.Authorization = `Bearer ${anonKey}`;
+    // Supabase publishable keys (sb_publishable_*) are not JWTs and will fail if
+    // used as Bearer tokens. Only attach Authorization when the key is JWT-shaped.
+    if (anonKey.split(".").length === 3) {
+      headers.Authorization = `Bearer ${anonKey}`;
+    }
   }
 
   const response = await fetch(proxyUrl, {
@@ -650,6 +661,14 @@ async function exchangeGoogleTokenViaProxy(request: GoogleTokenProxyRequest) {
           : GOOGLE_REDIRECT_URI,
     });
     logProviderFailure("Google token exchange", response.status, responseText);
+    if (
+      response.status === 401 &&
+      responseText.includes("UNAUTHORIZED_INVALID_JWT_FORMAT")
+    ) {
+      throw new Error(
+        "Google token proxy authorization failed (Supabase 401). Use a legacy JWT anon key in SUPABASE_ANON_KEY, or deploy the function with JWT verification disabled.",
+      );
+    }
     throw new Error(
       formatGoogleTokenExchangeError(response.status, responseText, debugContext),
     );
@@ -926,11 +945,35 @@ async function getValidGoogleAccessToken(accountId: string): Promise<string> {
   const refreshPromise = (async () => {
     try {
       const clientId = token.clientId || GOOGLE_CLIENT_ID;
-      const refreshed = await exchangeGoogleTokenViaProxy({
-        grantType: "refresh_token",
-        clientId,
-        refreshToken: token.refreshToken!,
-      });
+      let refreshed: {
+        access_token: string;
+        refresh_token?: string;
+        expires_in: number;
+        scope?: string;
+        token_type: string;
+      };
+      try {
+        refreshed = await exchangeGoogleTokenViaProxy({
+          grantType: "refresh_token",
+          clientId,
+          refreshToken: token.refreshToken!,
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          isGoogleUnauthorizedClientError(error.message)
+        ) {
+          const latestTokens = loadGoogleTokens();
+          if (latestTokens[accountId]) {
+            delete latestTokens[accountId];
+            saveGoogleTokens(latestTokens);
+          }
+          throw new Error(
+            "Google OAuth credentials changed for this account. Reconnect the Google account to continue syncing.",
+          );
+        }
+        throw error;
+      }
 
       const latestTokens = loadGoogleTokens();
       latestTokens[accountId] = {
