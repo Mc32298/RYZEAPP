@@ -38,6 +38,15 @@ export default defineConfig(({ mode }) => {
       env.MICROSOFT_OAUTH_SCOPE ||
         "openid profile offline_access User.Read Mail.Read Mail.ReadWrite Mail.Send Calendars.Read"
     ),
+    "process.env.GOOGLE_OAUTH_CLIENT_ID": JSON.stringify(
+      env.GOOGLE_OAUTH_CLIENT_ID || ""
+    ),
+    "process.env.GOOGLE_OAUTH_CLIENT_SECRET": JSON.stringify(
+      env.GOOGLE_OAUTH_CLIENT_SECRET || ""
+    ),
+    "process.env.GOOGLE_OAUTH_REDIRECT_URI": JSON.stringify(
+      env.GOOGLE_OAUTH_REDIRECT_URI || "http://127.0.0.1:53682"
+    ),
   };
 
   return {

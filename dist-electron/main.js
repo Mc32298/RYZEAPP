@@ -61437,9 +61437,6 @@ function buildGraphReplyPayload(comment) {
     comment: comment.trim() || " "
   };
 }
-function isValidAccountId(value) {
-  return /^(ms|google|imap)-[A-Za-z0-9._-]+$/.test(value);
-}
 function buildGmailMoveLabelMutation(destination) {
   const normalizedDestination = destination.toUpperCase();
   if (normalizedDestination === "ARCHIVE") {
@@ -61691,35 +61688,9 @@ function formatGoogleTokenExchangeError(status2, errorText, debugContext) {
     debugContext ? `Debug: clientIdSuffix=${debugContext.clientIdSuffix}, redirectUri=${debugContext.redirectUri}, usesPkce=${String(debugContext.usesPkce)}.` : ""
   ].join(" ");
 }
-function parseStoredAttachments(value) {
-  try {
-    const parsed = JSON.parse(value || "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-function shouldUseLocalMessageBody({
-  bodyContent,
-  hasAttachments,
-  attachmentsJson
-}) {
-  if (!bodyContent?.trim()) {
-    return false;
-  }
-  if (!hasAttachments) {
-    return true;
-  }
-  return parseStoredAttachments(attachmentsJson).length > 0;
-}
-const electronApi = electron.default ?? electron;
-const { app, BrowserWindow, ipcMain, shell, safeStorage, dialog } = electronApi;
-if (!app.isPackaged) {
-  mainExports.config();
-}
-const __filename$1 = fileURLToPath(import.meta.url);
-const __dirname$1 = path.dirname(__filename$1);
-const dbPath = path.join(app.getPath("userData"), "emails.db");
+const electronApi$1 = electron.default ?? electron;
+const { app: app$1 } = electronApi$1;
+const dbPath = path.join(app$1.getPath("userData"), "emails.db");
 const db = new Database(dbPath);
 db.exec(`
   CREATE TABLE IF NOT EXISTS folders (
@@ -61796,7 +61767,13 @@ CREATE TABLE IF NOT EXISTS folder_sync_state (
 CREATE INDEX IF NOT EXISTS idx_folder_sync_state_account
 ON folder_sync_state(accountId);
 `);
-const ALLOWED_MIGRATION_TABLES = /* @__PURE__ */ new Set(["emails", "folders", "labels", "email_labels"]);
+const ALLOWED_MIGRATION_TABLES = /* @__PURE__ */ new Set([
+  "folders",
+  "emails",
+  "labels",
+  "email_labels",
+  "folder_sync_state"
+]);
 const SAFE_IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const SAFE_COLUMN_DEF_RE = /^[A-Z]+(\s+DEFAULT\s+('[^']*'|\d+))?$/i;
 function ensureColumn(tableName, columnName, definition) {
@@ -61821,24 +61798,27 @@ ensureColumn("folders", "icon", "TEXT DEFAULT ''");
 ensureColumn("emails", "isStarred", "INTEGER DEFAULT 0");
 ensureColumn("emails", "attachments", "TEXT DEFAULT '[]'");
 ensureColumn("emails", "snoozedUntil", "TEXT");
-const stateFilePath = path.join(app.getPath("userData"), "window-state.json");
-const settingsFilePath = path.join(app.getPath("userData"), "ryze-settings.json");
-const microsoftTokenFilePath = path.join(
-  app.getPath("userData"),
-  "microsoft-oauth-tokens.json"
-);
-const googleTokenFilePath = path.join(
-  app.getPath("userData"),
-  "google-oauth-tokens.json"
-);
-const aiProviderKeysFilePath = path.join(
-  app.getPath("userData"),
-  "ai-provider-keys.json"
-);
-const imapAccountsFilePath = path.join(
-  app.getPath("userData"),
-  "imap-accounts.json"
-);
+function parseStoredAttachments(value) {
+  try {
+    const parsed = JSON.parse(value || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+function shouldUseLocalMessageBody({
+  bodyContent,
+  hasAttachments,
+  attachmentsJson
+}) {
+  if (!bodyContent?.trim()) {
+    return false;
+  }
+  if (!hasAttachments) {
+    return true;
+  }
+  return parseStoredAttachments(attachmentsJson).length > 0;
+}
 function sleep(ms2) {
   return new Promise((resolve) => setTimeout(resolve, ms2));
 }
@@ -61849,101 +61829,6 @@ function getGraphRetryDelayMs(response, attempt) {
     return Math.max(retryAfterSeconds, 1) * 1e3;
   }
   return Math.min(3e4, attempt * 5e3);
-}
-const activeFullSyncs = /* @__PURE__ */ new Map();
-const oauthTimeoutMs = 2 * 60 * 1e3;
-const tokenRefreshLeadMs = 60 * 1e3;
-const maxGraphFetchAttempts = 4;
-const allowedMoveDestinations = /* @__PURE__ */ new Set([
-  "inbox",
-  "sentitems",
-  "drafts",
-  "archive",
-  "deleteditems"
-]);
-mainExports$1.autoUpdater.autoDownload = false;
-mainExports$1.autoUpdater.autoInstallOnAppQuit = true;
-mainExports$1.autoUpdater.logger = console;
-ipcMain.handle("app:get-version", () => app.getVersion());
-ipcMain.handle("updater:check", () => {
-  if (app.isPackaged) {
-    mainExports$1.autoUpdater.checkForUpdates();
-  }
-  return true;
-});
-ipcMain.handle("updater:start-download", () => {
-  mainExports$1.autoUpdater.downloadUpdate();
-  return true;
-});
-ipcMain.handle("updater:install", () => {
-  mainExports$1.autoUpdater.quitAndInstall(true, true);
-  return true;
-});
-mainExports$1.autoUpdater.on("update-available", (info) => {
-  const windows = BrowserWindow.getAllWindows();
-  if (windows.length > 0) {
-    windows[0].webContents.send("updater:available", info.version);
-  }
-});
-mainExports$1.autoUpdater.on("update-downloaded", () => {
-  const windows = BrowserWindow.getAllWindows();
-  if (windows.length > 0) {
-    windows[0].webContents.send("updater:downloaded");
-  }
-});
-mainExports$1.autoUpdater.on("update-not-available", () => {
-  console.log("[updater] No update available — already on latest version.");
-});
-mainExports$1.autoUpdater.on("error", (err2) => {
-  console.error("[updater] Error:", err2.message);
-  const windows = BrowserWindow.getAllWindows();
-  if (windows.length > 0) {
-    windows[0].webContents.send("updater:error", err2.message);
-  }
-});
-function shouldSkipMessageSyncForFolder(folder) {
-  const displayName = (folder.displayName || "").toLowerCase().trim();
-  const wellKnownName = (folder.wellKnownName || "").toLowerCase().trim();
-  const skippedWellKnownNames = /* @__PURE__ */ new Set([
-    "outbox",
-    "syncissues",
-    "conflicts",
-    "localfailures",
-    "serverfailures"
-  ]);
-  const skippedDisplayNames = /* @__PURE__ */ new Set([
-    "sync issues",
-    "conflicts",
-    "local failures",
-    "server failures",
-    "outbox"
-  ]);
-  return skippedWellKnownNames.has(wellKnownName) || skippedDisplayNames.has(displayName);
-}
-function getFolderSyncPriority(folder) {
-  const displayName = (folder.displayName || "").toLowerCase().trim();
-  const wellKnownName = (folder.wellKnownName || "").toLowerCase().trim();
-  if (wellKnownName === "inbox" || displayName === "inbox") return 0;
-  if (wellKnownName === "sentitems" || displayName === "sent items") return 1;
-  if (wellKnownName === "drafts" || displayName === "drafts") return 2;
-  if (wellKnownName === "archive" || displayName === "archive") return 3;
-  if (wellKnownName === "deleteditems" || displayName === "deleted items" || displayName === "trash") {
-    return 4;
-  }
-  if (!shouldSkipMessageSyncForFolder(folder)) return 10;
-  return 999;
-}
-function escapeHtml(value) {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
-function getMessageSyncFolders(folders) {
-  return [...folders].filter((folder) => !shouldSkipMessageSyncForFolder(folder)).sort((a, b) => {
-    const priorityDiff = getFolderSyncPriority(a) - getFolderSyncPriority(b);
-    if (priorityDiff !== 0) return priorityDiff;
-    return (a.path || a.displayName || "").localeCompare(
-      b.path || b.displayName || ""
-    );
-  });
 }
 function getFolderDeltaLink(accountId, folderId) {
   const row = db.prepare(
@@ -61988,6 +61873,14 @@ function saveFolderSyncState(accountId, folderId, deltaLink, syncType) {
     syncType,
     syncType
   );
+}
+function clearFolderSyncState(accountId, folderId) {
+  db.prepare(
+    `
+    DELETE FROM folder_sync_state
+    WHERE accountId = ? AND folderId = ?
+  `
+  ).run(accountId, folderId);
 }
 function upsertLocalGraphMessage(accountId, folderId, message) {
   const fromName = message.from?.emailAddress?.name || message.sender?.emailAddress?.name || "";
@@ -62115,14 +62008,6 @@ function deleteLocalMessage(accountId, messageId) {
     ).run(accountId, messageId);
   })();
 }
-function clearFolderSyncState(accountId, folderId) {
-  db.prepare(
-    `
-    DELETE FROM folder_sync_state
-    WHERE accountId = ? AND folderId = ?
-  `
-  ).run(accountId, folderId);
-}
 function getLocalInboxFolderId(accountId) {
   const row = db.prepare(
     `
@@ -62139,291 +62024,63 @@ function getLocalInboxFolderId(accountId) {
   ).get(accountId);
   return row?.id || "inbox";
 }
-function assertString(value, fieldName, maxLength = 4096) {
-  if (typeof value !== "string") {
-    throw new Error(`${fieldName} must be a string`);
+function getKnownFolderName(folder) {
+  if (folder.wellKnownName) {
+    return folder.wellKnownName.toLowerCase();
   }
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error(`${fieldName} is required`);
+  const id2 = folder.id.toLowerCase();
+  const displayName = folder.displayName.toLowerCase().replace(/\s+/g, "");
+  if (id2 === "inbox" || displayName === "inbox" || displayName === "indbakke" || displayName === "bandejadeentrada" || displayName === "boîtederéception")
+    return "inbox";
+  if (id2 === "sentitems" || displayName === "sentitems" || displayName === "sent" || displayName === "sendtpost" || displayName === "elementosenviados" || displayName === "élémentsenvoyés")
+    return "sentitems";
+  if (id2 === "drafts" || displayName === "drafts" || displayName === "kladder" || displayName === "borradores" || displayName === "brouillons")
+    return "drafts";
+  if (id2 === "archive" || displayName === "archive" || displayName === "arkiv" || displayName === "archivo")
+    return "archive";
+  if (id2 === "deleteditems" || displayName === "deleteditems" || displayName === "deleted" || displayName === "trash" || displayName === "papirkurv" || displayName === "elementoseliminados" || displayName === "élémentsupprimés") {
+    return "deleteditems";
   }
-  if (trimmed.length > maxLength) {
-    throw new Error(`${fieldName} is too long`);
-  }
-  return trimmed;
+  return "";
 }
-function getGeminiApiKey() {
-  const storedKey = loadAiProviderKeys().gemini?.apiKey?.trim();
-  const apiKey = storedKey || process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error(
-      "Gemini API key is missing. Add it in Settings > AI & keys."
-    );
-  }
-  return apiKey;
-}
-function getGeminiModel() {
-  const rawModel = loadBackendSettings().geminiModel || process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
-  return rawModel.replace(/^models\//, "");
-}
-function getAiProvider() {
-  const provider = loadBackendSettings().aiProvider;
-  return provider === "ollama" ? "ollama" : "gemini";
-}
-function getOllamaConfig() {
-  const settings = loadBackendSettings();
-  const baseUrl = (settings.ollamaBaseUrl || "http://127.0.0.1:11434").trim();
-  const model = (settings.ollamaModel || "llama3.2").trim();
-  if (!model) {
-    throw new Error("Ollama model is missing. Add it in Settings > AI & keys.");
-  }
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(baseUrl);
-  } catch {
-    throw new Error("Ollama server URL is invalid.");
-  }
-  const isLocalHost = parsedUrl.hostname === "localhost" || parsedUrl.hostname === "127.0.0.1" || parsedUrl.hostname === "::1";
-  if (parsedUrl.protocol !== "http:" || !isLocalHost) {
-    throw new Error("Ollama server URL must be a local http URL.");
-  }
-  return {
-    baseUrl: parsedUrl.origin,
-    model
-  };
-}
-function loadBackendSettings() {
-  try {
-    if (!fs$1.existsSync(settingsFilePath)) {
-      return {};
+function saveFoldersToLocalDb(accountId, folders) {
+  const folderUpsert = db.prepare(`
+    INSERT INTO folders (
+      id,
+      accountId,
+      displayName,
+      parentFolderId,
+      wellKnownName,
+      totalItemCount,
+      unreadItemCount,
+      depth,
+      path
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(accountId, id) DO UPDATE SET
+      displayName = excluded.displayName,
+      parentFolderId = excluded.parentFolderId,
+      wellKnownName = excluded.wellKnownName,
+      totalItemCount = excluded.totalItemCount,
+      unreadItemCount = excluded.unreadItemCount,
+      depth = excluded.depth,
+      path = excluded.path
+  `);
+  const insertFolders = db.transaction((foldersList) => {
+    for (const folder of foldersList) {
+      folderUpsert.run(
+        folder.id,
+        accountId,
+        folder.displayName || "Folder",
+        folder.parentFolderId || "",
+        getKnownFolderName(folder),
+        folder.totalItemCount || 0,
+        folder.unreadItemCount || 0,
+        folder.depth || 0,
+        folder.path || folder.displayName || "Folder"
+      );
     }
-    const parsed = JSON.parse(fs$1.readFileSync(settingsFilePath, "utf8"));
-    return typeof parsed === "object" && parsed ? parsed : {};
-  } catch (error2) {
-    console.error("Failed to load backend settings:", error2);
-    return {};
-  }
-}
-function getGeminiApiVersion() {
-  return process.env.GEMINI_API_VERSION?.trim() || "v1";
-}
-function sanitizeOutgoingHtml(html) {
-  return html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<iframe[\s\S]*?<\/iframe>/gi, "").replace(/<object[\s\S]*?<\/object>/gi, "").replace(/<embed[\s\S]*?>/gi, "").replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, "").replace(/(href|src|action)\s*=\s*["']?\s*(?:javascript|vbscript)\s*:[^"'>]*/gi, "");
-}
-function stripHtmlForAi(input) {
-  return input.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/\s+/g, " ").trim();
-}
-function limitAiInput(value, maxLength = 12e3) {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength)}
-
-[Email content truncated for privacy and performance.]`;
-}
-function extractJsonObject(value) {
-  const trimmed = value.trim();
-  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  const candidate = fencedMatch?.[1] || trimmed;
-  const start = candidate.indexOf("{");
-  const end = candidate.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) {
-    return null;
-  }
-  return candidate.slice(start, end + 1);
-}
-function normalizeAiSummaryResult(rawText) {
-  const jsonText = extractJsonObject(rawText);
-  if (jsonText) {
-    try {
-      const parsed = JSON.parse(jsonText);
-      const summary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
-      const keyPoints = Array.isArray(parsed.keyPoints) ? parsed.keyPoints.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean).slice(0, 5) : [];
-      const suggestedActions = Array.isArray(parsed.suggestedActions) ? parsed.suggestedActions.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean).slice(0, 3) : [];
-      if (summary || keyPoints.length > 0 || suggestedActions.length > 0) {
-        return {
-          summary,
-          keyPoints,
-          suggestedActions
-        };
-      }
-    } catch {
-    }
-  }
-  return {
-    summary: rawText.trim(),
-    keyPoints: [],
-    suggestedActions: []
-  };
-}
-function validateAiEmailPayload(payload) {
-  return {
-    subject: optionalString(payload?.subject, "subject", 512),
-    senderName: optionalString(payload?.senderName, "senderName", 256),
-    senderEmail: optionalString(payload?.senderEmail, "senderEmail", 512),
-    body: optionalString(payload?.body, "body", 5e5),
-    preview: optionalString(payload?.preview, "preview", 5e3)
-  };
-}
-function validateAiReplyPayload(payload) {
-  return {
-    ...validateAiEmailPayload(payload),
-    tone: optionalString(payload?.tone, "tone", 32).toLowerCase()
-  };
-}
-function normalizeAiReplyResult(rawText) {
-  const jsonText = extractJsonObject(rawText);
-  if (jsonText) {
-    try {
-      const parsed = JSON.parse(jsonText);
-      const reply = typeof parsed.reply === "string" ? parsed.reply.trim() : "";
-      if (reply) return reply;
-    } catch {
-    }
-  }
-  return rawText.trim();
-}
-function sanitizeBackendSettings(settings) {
-  const value = settings && typeof settings === "object" ? settings : {};
-  const aiProvider = optionalString(value.aiProvider, "aiProvider", 32).trim();
-  const geminiModel = optionalString(value.geminiModel, "geminiModel", 64).trim();
-  const ollamaBaseUrl = optionalString(value.ollamaBaseUrl, "ollamaBaseUrl", 512).trim();
-  const ollamaModel = optionalString(value.ollamaModel, "ollamaModel", 128).trim();
-  return {
-    aiProvider: aiProvider === "ollama" ? "ollama" : "gemini",
-    geminiModel: geminiModel || "gemini-2.5-flash",
-    ollamaBaseUrl: ollamaBaseUrl || "http://127.0.0.1:11434",
-    ollamaModel: ollamaModel || "llama3.2"
-  };
-}
-function sanitizeDraftsPayload(drafts) {
-  if (!Array.isArray(drafts)) {
-    throw new Error("drafts must be an array");
-  }
-  return drafts.slice(0, 20).map((draft, index) => {
-    const value = draft && typeof draft === "object" ? draft : {};
-    const id2 = optionalString(value.id, `drafts[${index}].id`, 128).trim();
-    return {
-      id: id2 || `draft-${crypto.randomUUID()}`,
-      to: optionalString(value.to, `drafts[${index}].to`, 4096),
-      cc: optionalString(value.cc, `drafts[${index}].cc`, 4096),
-      subject: optionalString(value.subject, `drafts[${index}].subject`, 512),
-      body: sanitizeOutgoingHtml(
-        optionalString(value.body, `drafts[${index}].body`, 5e5)
-      ),
-      isMinimized: Boolean(value.isMinimized),
-      isFullscreen: Boolean(value.isFullscreen),
-      scheduledSendAt: optionalString(value.scheduledSendAt, `drafts[${index}].scheduledSendAt`, 64) || void 0,
-      aiTone: optionalString(value.aiTone, `drafts[${index}].aiTone`, 32) || void 0,
-      aiHint: optionalString(value.aiHint, `drafts[${index}].aiHint`, 2048) || void 0
-    };
   });
-}
-function optionalString(value, fieldName, maxLength = 4096) {
-  if (value === void 0 || value === null) {
-    return "";
-  }
-  if (typeof value !== "string") {
-    throw new Error(`${fieldName} must be a string`);
-  }
-  if (value.length > maxLength) {
-    throw new Error(`${fieldName} is too long`);
-  }
-  return value;
-}
-function validateAccountId(accountId) {
-  const value = assertString(accountId, "accountId", 256);
-  if (!isValidAccountId(value)) {
-    throw new Error("Invalid accountId");
-  }
-  return value;
-}
-function validateMessageId(messageId) {
-  return assertString(messageId, "messageId", 2048);
-}
-function validateLabelId(labelId) {
-  const value = assertString(labelId, "labelId", 128);
-  if (!/^label-[A-Za-z0-9._-]+$/.test(value)) {
-    throw new Error("Invalid labelId");
-  }
-  return value;
-}
-function validateLabelName(name2) {
-  const value = assertString(name2, "name", 64).replace(/\s+/g, " ").trim();
-  if (value.length < 2) {
-    throw new Error("Label name must be at least 2 characters");
-  }
-  return value;
-}
-function validateFolderName(name2) {
-  const value = assertString(name2, "folderName", 64).replace(/\s+/g, " ").trim();
-  if (value.length < 2) {
-    throw new Error("Folder name must be at least 2 characters");
-  }
-  const reservedNames = /* @__PURE__ */ new Set([
-    "inbox",
-    "sent",
-    "sent items",
-    "drafts",
-    "archive",
-    "deleted items",
-    "trash",
-    "junk",
-    "junk email",
-    "outbox"
-  ]);
-  if (reservedNames.has(value.toLowerCase())) {
-    throw new Error("That folder name is reserved by the mail provider.");
-  }
-  if (/[\\/:*?"<>|]/.test(value)) {
-    throw new Error("Folder name contains invalid characters.");
-  }
-  return value;
-}
-function validateLabelColor(color) {
-  const value = optionalString(color, "color", 16).trim() || "#C9A84C";
-  if (!/^#[0-9A-Fa-f]{6}$/.test(value)) {
-    throw new Error("Invalid label color");
-  }
-  return value;
-}
-function validateFolderId(folderId) {
-  return assertString(folderId, "folderId", 2048);
-}
-const allowedFolderIcons = /* @__PURE__ */ new Set([
-  "folder",
-  "briefcase",
-  "users",
-  "star",
-  "heart",
-  "home",
-  "receipt",
-  "shopping",
-  "travel",
-  "code",
-  "bank",
-  "alert",
-  "archive",
-  "tag"
-]);
-function validateFolderIcon(icon) {
-  const value = optionalString(icon, "icon", 64).trim();
-  if (!value) {
-    return "folder";
-  }
-  if (!allowedFolderIcons.has(value)) {
-    throw new Error("Invalid folder icon");
-  }
-  return value;
-}
-function validateDestinationFolder(destinationFolder) {
-  const folder = assertString(
-    destinationFolder,
-    "destinationFolder",
-    64
-  ).toLowerCase();
-  if (!allowedMoveDestinations.has(folder)) {
-    throw new Error("Invalid destination folder");
-  }
-  return folder;
+  insertFolders(folders);
 }
 function getFolderAndDescendantIds(accountId, folderId) {
   const folders = db.prepare(
@@ -62452,618 +62109,149 @@ function getFolderAndDescendantIds(accountId, folderId) {
   visit(folderId);
   return Array.from(result);
 }
-function parseRecipients(emailsString) {
-  if (!emailsString) return [];
-  return emailsString.split(",").map((email) => email.trim()).filter(Boolean).map((email) => {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      throw new Error(`Invalid email address: ${email}`);
-    }
-    return {
+function accountHasAnyLocalMessages(accountId) {
+  const row = db.prepare(
+    `
+      SELECT id
+      FROM emails
+      WHERE accountId = ?
+      LIMIT 1
+    `
+  ).get(accountId);
+  return Boolean(row);
+}
+function accountHasAnyDeltaState(accountId) {
+  const row = db.prepare(
+    `
+      SELECT folderId
+      FROM folder_sync_state
+      WHERE accountId = ?
+      LIMIT 1
+    `
+  ).get(accountId);
+  return Boolean(row);
+}
+function shouldRunInitialFullSync(accountId) {
+  return !accountHasAnyDeltaState(accountId) || !accountHasAnyLocalMessages(accountId);
+}
+function rowsToMessages(rows) {
+  return rows.map((row) => ({
+    id: row.id,
+    subject: row.subject,
+    bodyPreview: row.bodyPreview,
+    body: row.bodyContentType ? {
+      contentType: row.bodyContentType,
+      content: row.bodyContent
+    } : void 0,
+    receivedDateTime: row.receivedDateTime,
+    isRead: Boolean(row.isRead),
+    hasAttachments: Boolean(row.hasAttachments),
+    attachments: JSON.parse(row.attachments || "[]"),
+    isStarred: Boolean(row.isStarred),
+    from: {
       emailAddress: {
-        address: email
+        name: row.fromName,
+        address: row.fromAddress
       }
-    };
-  });
-}
-function toBase64Url(value) {
-  const base = Buffer.isBuffer(value) ? value.toString("base64") : Buffer.from(value).toString("base64");
-  return base.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-function getMicrosoftOAuthEnv() {
-  const clientId = "b32a0e59-d61f-4655-981c-a18266e0af4f"?.trim() || "b32a0e59-d61f-4655-981c-a18266e0af4f"?.trim();
-  const tenantId = "common"?.trim() || "common";
-  const redirectUri = "http://127.0.0.1:42813/auth/microsoft/callback"?.trim() || "http://127.0.0.1:42813/auth/microsoft/callback"?.trim() || "http://127.0.0.1:42813/auth/microsoft/callback";
-  const scope = "openid profile offline_access User.Read Mail.Read Mail.ReadWrite Mail.Send Calendars.Read"?.trim() || "openid profile offline_access User.Read Mail.Read Mail.ReadWrite Mail.Send Calendars.Read";
-  if (!clientId) {
-    throw new Error("Missing MICROSOFT_OAUTH_CLIENT_ID");
-  }
-  if (!/^[0-9a-fA-F-]{36}$/.test(clientId)) {
-    throw new Error(
-      "MICROSOFT_OAUTH_CLIENT_ID must be the Azure Application client ID GUID, not a client secret value"
-    );
-  }
-  const parsedRedirect = new URL(redirectUri);
-  if (!["127.0.0.1", "localhost"].includes(parsedRedirect.hostname) || parsedRedirect.protocol !== "http:") {
-    throw new Error(
-      "MICROSOFT_OAUTH_REDIRECT_URI must be a localhost loopback URL"
-    );
-  }
-  if (!parsedRedirect.port) {
-    throw new Error(
-      "MICROSOFT_OAUTH_REDIRECT_URI must include an explicit port, for example: http://127.0.0.1:42813/auth/microsoft/callback"
-    );
-  }
-  return {
-    clientId,
-    tenantId,
-    redirectUri,
-    scope
-  };
-}
-function getMicrosoftOAuthRefreshConfig(token) {
-  const clientId = token.clientId?.trim();
-  const tenantId = token.tenantId?.trim();
-  const scope = token.oauthScope?.trim();
-  if (clientId && tenantId && scope) {
-    if (!/^[0-9a-fA-F-]{36}$/.test(clientId)) {
-      throw new Error(
-        "Stored Microsoft OAuth client ID is invalid. Please reconnect the account."
-      );
-    }
-    return {
-      clientId,
-      tenantId,
-      scope
-    };
-  }
-  try {
-    const env = getMicrosoftOAuthEnv();
-    return {
-      clientId: env.clientId,
-      tenantId: env.tenantId,
-      scope: env.scope
-    };
-  } catch (error2) {
-    if (error2 instanceof Error && error2.message === "Missing MICROSOFT_OAUTH_CLIENT_ID") {
-      throw new Error(
-        "Microsoft OAuth config is missing and this account token needs refresh. Please reconnect the account."
-      );
-    }
-    throw error2;
-  }
-}
-function loadMicrosoftTokens() {
-  try {
-    if (!fs$1.existsSync(microsoftTokenFilePath)) {
-      return {};
-    }
-    const fileContents = fs$1.readFileSync(microsoftTokenFilePath, "utf8");
-    if (!fileContents) {
-      return {};
-    }
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Secure token storage is not available on this system");
-    }
-    const decoded = safeStorage.decryptString(
-      Buffer.from(fileContents, "base64")
-    );
-    return JSON.parse(decoded);
-  } catch (error2) {
-    console.error("Failed to load stored Microsoft tokens:", error2);
-    return {};
-  }
-}
-function saveMicrosoftTokens(tokens) {
-  try {
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Secure token storage is not available on this system");
-    }
-    const payload = JSON.stringify(tokens);
-    const content = safeStorage.encryptString(payload).toString("base64");
-    fs$1.writeFileSync(microsoftTokenFilePath, content, {
-      encoding: "utf8",
-      mode: 384
-    });
-  } catch (error2) {
-    console.error("Failed to save Microsoft tokens:", error2);
-    throw error2;
-  }
-}
-const GOOGLE_CLIENT_ID = "224714941754-dmhs2n3lmljpgajk3qak2glsoqdtl6ea.apps.googleusercontent.com";
-const GOOGLE_CLIENT_SECRET = "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";
-const GOOGLE_REDIRECT_URI = "http://localhost:53682";
-const GOOGLE_SCOPE = "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send";
-const GMAIL_SYSTEM_FOLDERS = [
-  { id: "INBOX", displayName: "Inbox", wellKnownName: "inbox", depth: 0, path: "Inbox" },
-  { id: "SENT", displayName: "Sent", wellKnownName: "sentitems", depth: 0, path: "Sent" },
-  { id: "DRAFT", displayName: "Drafts", wellKnownName: "drafts", depth: 0, path: "Drafts" },
-  { id: "ARCHIVE", displayName: "Archive", wellKnownName: "archive", depth: 0, path: "Archive" },
-  { id: "TRASH", displayName: "Trash", wellKnownName: "deleteditems", depth: 0, path: "Trash" },
-  { id: "STARRED", displayName: "Starred", wellKnownName: "", depth: 0, path: "Starred" },
-  { id: "SPAM", displayName: "Spam", wellKnownName: "junkmail", depth: 0, path: "Spam" }
-];
-function loadGoogleTokens() {
-  try {
-    if (!fs$1.existsSync(googleTokenFilePath)) return {};
-    const fileContents = fs$1.readFileSync(googleTokenFilePath, "utf8");
-    if (!fileContents) return {};
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Secure token storage is not available on this system");
-    }
-    const decoded = safeStorage.decryptString(Buffer.from(fileContents, "base64"));
-    return JSON.parse(decoded);
-  } catch (error2) {
-    console.error("Failed to load stored Google tokens:", error2);
-    return {};
-  }
-}
-function saveGoogleTokens(tokens) {
-  try {
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Secure token storage is not available on this system");
-    }
-    const content = safeStorage.encryptString(JSON.stringify(tokens)).toString("base64");
-    fs$1.writeFileSync(googleTokenFilePath, content, { encoding: "utf8", mode: 384 });
-  } catch (error2) {
-    console.error("Failed to save Google tokens:", error2);
-    throw error2;
-  }
-}
-function loadImapAccounts() {
-  try {
-    if (!fs$1.existsSync(imapAccountsFilePath)) return {};
-    const fileContents = fs$1.readFileSync(imapAccountsFilePath, "utf8");
-    if (!fileContents) return {};
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Secure IMAP account storage is not available on this system");
-    }
-    const decoded = safeStorage.decryptString(Buffer.from(fileContents, "base64"));
-    return JSON.parse(decoded);
-  } catch (error2) {
-    console.error("Failed to load stored IMAP accounts:", error2);
-    return {};
-  }
-}
-function saveImapAccounts(accounts) {
-  try {
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Secure IMAP account storage is not available on this system");
-    }
-    const content = safeStorage.encryptString(JSON.stringify(accounts)).toString("base64");
-    fs$1.writeFileSync(imapAccountsFilePath, content, { encoding: "utf8", mode: 384 });
-  } catch (error2) {
-    console.error("Failed to save IMAP accounts:", error2);
-    throw error2;
-  }
-}
-function upsertImapSystemFolders(accountId) {
-  const folders = [
-    { id: "INBOX", displayName: "Inbox", wellKnownName: "inbox", path: "Inbox" },
-    { id: "Sent", displayName: "Sent", wellKnownName: "sentitems", path: "Sent" },
-    { id: "Drafts", displayName: "Drafts", wellKnownName: "drafts", path: "Drafts" },
-    { id: "Archive", displayName: "Archive", wellKnownName: "archive", path: "Archive" },
-    { id: "Trash", displayName: "Trash", wellKnownName: "deleteditems", path: "Trash" },
-    { id: "Junk", displayName: "Junk", wellKnownName: "junkmail", path: "Junk" }
-  ];
-  const statement = db.prepare(`
-    INSERT INTO folders (id, accountId, displayName, parentFolderId, wellKnownName, totalItemCount, unreadItemCount, depth, path)
-    VALUES (@id, @accountId, @displayName, NULL, @wellKnownName, 0, 0, 0, @path)
-    ON CONFLICT(accountId, id) DO UPDATE SET
-      displayName = excluded.displayName,
-      wellKnownName = excluded.wellKnownName,
-      path = excluded.path
-  `);
-  db.transaction(() => {
-    for (const folder of folders) {
-      statement.run({ ...folder, accountId });
-    }
-  })();
-}
-function upsertImapFolders(rows) {
-  const statement = db.prepare(`
-    INSERT INTO folders (id, accountId, displayName, parentFolderId, wellKnownName, totalItemCount, unreadItemCount, depth, path)
-    VALUES (@id, @accountId, @displayName, @parentFolderId, @wellKnownName, @totalItemCount, @unreadItemCount, @depth, @path)
-    ON CONFLICT(accountId, id) DO UPDATE SET
-      displayName = excluded.displayName,
-      parentFolderId = excluded.parentFolderId,
-      wellKnownName = excluded.wellKnownName,
-      totalItemCount = excluded.totalItemCount,
-      unreadItemCount = excluded.unreadItemCount,
-      depth = excluded.depth,
-      path = excluded.path
-  `);
-  db.transaction(() => {
-    for (const row of rows) {
-      statement.run(row);
-    }
-  })();
-}
-function upsertImapMessage(row) {
-  db.prepare(`
-    INSERT INTO emails (
-      id, accountId, folder, subject, bodyPreview, bodyContentType, bodyContent,
-      receivedDateTime, isRead, hasAttachments, isStarred, fromName, fromAddress,
-      toRecipients, ccRecipients
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      accountId = excluded.accountId,
-      folder = excluded.folder,
-      subject = excluded.subject,
-      bodyPreview = excluded.bodyPreview,
-      bodyContentType = excluded.bodyContentType,
-      bodyContent = excluded.bodyContent,
-      receivedDateTime = excluded.receivedDateTime,
-      isRead = excluded.isRead,
-      hasAttachments = excluded.hasAttachments,
-      isStarred = excluded.isStarred,
-      fromName = excluded.fromName,
-      fromAddress = excluded.fromAddress,
-      toRecipients = excluded.toRecipients,
-      ccRecipients = excluded.ccRecipients
-  `).run(
-    row.id,
-    row.accountId,
-    row.folder,
-    row.subject,
-    row.bodyPreview,
-    row.bodyContentType,
-    row.bodyContent,
-    row.receivedDateTime,
-    row.isRead,
-    row.hasAttachments,
-    row.isStarred,
-    row.fromName,
-    row.fromAddress,
-    row.toRecipients,
-    row.ccRecipients
-  );
-}
-async function syncImapAccount(accountId) {
-  const accounts = loadImapAccounts();
-  const config2 = accounts[accountId];
-  if (!config2) {
-    throw new Error("No IMAP account stored for this account.");
-  }
-  const client = new imapFlowExports.ImapFlow({
-    host: config2.host,
-    port: config2.port,
-    secure: config2.secure,
-    auth: {
-      user: config2.username,
-      pass: config2.password
     },
-    logger: false
-  });
-  try {
-    await client.connect();
-    const mailboxes = await client.list();
-    const folderRows = buildImapFolderRows(accountId, mailboxes);
-    upsertImapFolders(folderRows);
-    const inboxFolder = folderRows.find((folder) => folder.wellKnownName === "inbox") || folderRows.find((folder) => normalizeImapMailboxPath(folder.id).toUpperCase() === "INBOX");
-    if (!inboxFolder) {
-      return {
-        folders: getLocalFolders(accountId),
-        messagesByFolder: getLocalMessagesByFolder(accountId),
-        syncedCount: 0
-      };
-    }
-    const mailbox = await client.mailboxOpen(inboxFolder.id, { readOnly: true });
-    const exists = Number(mailbox.exists || 0);
-    const start = Math.max(1, exists - 49);
-    let syncedCount = 0;
-    if (exists > 0) {
-      for await (const message of client.fetch(
-        `${start}:*`,
-        {
-          uid: true,
-          envelope: true,
-          flags: true,
-          source: true
-        },
-        { uid: false }
-      )) {
-        const mapped = mapImapMessageToLocalMessage({
-          accountId,
-          folderId: inboxFolder.id,
-          uid: message.uid,
-          flags: message.flags,
-          envelope: message.envelope,
-          source: message.source
-        });
-        upsertImapMessage(mapped);
-        syncedCount += 1;
-      }
-    }
-    saveFolderSyncState(accountId, inboxFolder.id, "", "full");
-    return {
-      folders: getLocalFolders(accountId),
-      messagesByFolder: getLocalMessagesByFolder(accountId),
-      syncedCount
-    };
-  } finally {
-    await client.logout().catch(() => void 0);
+    toRecipients: JSON.parse(row.toRecipients || "[]"),
+    ccRecipients: JSON.parse(row.ccRecipients || "[]"),
+    snoozedUntil: row.snoozedUntil || null
+  }));
+}
+function getLocalFolders(accountId) {
+  return db.prepare(
+    `
+      SELECT *
+      FROM folders
+      WHERE accountId = ?
+      ORDER BY path COLLATE NOCASE ASC
+    `
+  ).all(accountId);
+}
+function getLocalMessagesByFolder(accountId) {
+  const folders = getLocalFolders(accountId);
+  const messagesByFolder = {};
+  for (const folder of folders) {
+    const rows = db.prepare(
+      `
+    SELECT
+      id,
+      accountId,
+      folder,
+      subject,
+      bodyPreview,
+      bodyContentType,
+      bodyContent,
+      receivedDateTime,
+      isRead,
+      hasAttachments,
+      isStarred,
+      attachments,
+      fromName,
+      fromAddress,
+      toRecipients,
+      ccRecipients
+    FROM emails
+    WHERE accountId = ? AND folder = ?
+    ORDER BY receivedDateTime DESC
+  `
+    ).all(accountId, folder.id);
+    messagesByFolder[folder.id] = rowsToMessages(rows);
   }
+  return messagesByFolder;
 }
-const activeGoogleTokenRefreshPromises = /* @__PURE__ */ new Map();
-async function getValidGoogleAccessToken(accountId) {
-  const tokens = loadGoogleTokens();
-  const token = tokens[accountId];
-  if (!token) throw new Error("No Google token stored for this account");
-  if (token.expiresAt > Date.now() + tokenRefreshLeadMs) return token.accessToken;
-  if (!token.refreshToken) {
-    throw new Error("Google refresh token missing. Please reconnect the account.");
+function getLocalLabels(accountId) {
+  return db.prepare(
+    `
+      SELECT id, accountId, name, color, createdAt, updatedAt
+      FROM labels
+      WHERE accountId = ?
+      ORDER BY name COLLATE NOCASE ASC
+    `
+  ).all(accountId);
+}
+const maxGraphFetchAttempts = 4;
+function shouldSkipMessageSyncForFolder(folder) {
+  const displayName = (folder.displayName || "").toLowerCase().trim();
+  const wellKnownName = (folder.wellKnownName || "").toLowerCase().trim();
+  const skippedWellKnownNames = /* @__PURE__ */ new Set([
+    "outbox",
+    "syncissues",
+    "conflicts",
+    "localfailures",
+    "serverfailures"
+  ]);
+  const skippedDisplayNames = /* @__PURE__ */ new Set([
+    "sync issues",
+    "conflicts",
+    "local failures",
+    "server failures",
+    "outbox"
+  ]);
+  return skippedWellKnownNames.has(wellKnownName) || skippedDisplayNames.has(displayName);
+}
+function getFolderSyncPriority(folder) {
+  const displayName = (folder.displayName || "").toLowerCase().trim();
+  const wellKnownName = (folder.wellKnownName || "").toLowerCase().trim();
+  if (wellKnownName === "inbox" || displayName === "inbox") return 0;
+  if (wellKnownName === "sentitems" || displayName === "sent items") return 1;
+  if (wellKnownName === "drafts" || displayName === "drafts") return 2;
+  if (wellKnownName === "archive" || displayName === "archive") return 3;
+  if (wellKnownName === "deleteditems" || displayName === "deleted items" || displayName === "trash") {
+    return 4;
   }
-  const existing = activeGoogleTokenRefreshPromises.get(accountId);
-  if (existing) return existing;
-  const refreshPromise = (async () => {
-    try {
-      const clientId = token.clientId || GOOGLE_CLIENT_ID;
-      const params = buildGoogleRefreshTokenParams({
-        clientId,
-        clientSecret: GOOGLE_CLIENT_SECRET,
-        refreshToken: token.refreshToken
-      });
-      const response = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params.toString()
-      });
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(formatGoogleTokenExchangeError(response.status, errorText));
-      }
-      const refreshed = await response.json();
-      const latestTokens = loadGoogleTokens();
-      latestTokens[accountId] = {
-        ...token,
-        accessToken: refreshed.access_token,
-        expiresAt: Date.now() + refreshed.expires_in * 1e3,
-        scope: refreshed.scope || token.scope,
-        tokenType: refreshed.token_type || token.tokenType,
-        clientId
-      };
-      saveGoogleTokens(latestTokens);
-      return latestTokens[accountId].accessToken;
-    } finally {
-      activeGoogleTokenRefreshPromises.delete(accountId);
-    }
-  })();
-  activeGoogleTokenRefreshPromises.set(accountId, refreshPromise);
-  return refreshPromise;
+  if (!shouldSkipMessageSyncForFolder(folder)) return 10;
+  return 999;
 }
-function gmailParseHeader(headers2, name2) {
-  return headers2.find((h) => h.name.toLowerCase() === name2.toLowerCase())?.value ?? "";
-}
-function gmailParseAddress(raw) {
-  const match = /^(.*?)\s*<([^>]+)>$/.exec(raw.trim());
-  if (match) return { name: match[1].replace(/^"|"$/g, "").trim(), address: match[2].trim() };
-  return { name: "", address: raw.trim() };
-}
-function gmailExtractBody(part) {
-  if (!part) return { content: "", contentType: "text" };
-  if (part.parts && part.parts.length > 0) {
-    const htmlPart = part.parts.find((p) => p.mimeType === "text/html");
-    const textPart = part.parts.find((p) => p.mimeType === "text/plain");
-    for (const candidate of [htmlPart, textPart]) {
-      if (!candidate) continue;
-      if (candidate.body?.data) {
-        const decoded = Buffer.from(candidate.body.data, "base64").toString("utf8");
-        return { content: decoded, contentType: candidate.mimeType === "text/html" ? "html" : "text" };
-      }
-      if (candidate.parts) {
-        const nested = gmailExtractBody(candidate);
-        if (nested.content) return nested;
-      }
-    }
-  }
-  if (part.body?.data) {
-    const decoded = Buffer.from(part.body.data, "base64").toString("utf8");
-    return { content: decoded, contentType: part.mimeType === "text/html" ? "html" : "text" };
-  }
-  return { content: "", contentType: "text" };
-}
-function gmailUpsertFolders(accountId) {
-  const upsertFolder = db.prepare(`
-    INSERT INTO folders (id, accountId, displayName, parentFolderId, wellKnownName, totalItemCount, unreadItemCount, depth, path)
-    VALUES (?, ?, ?, NULL, ?, 0, 0, ?, ?)
-    ON CONFLICT(accountId, id) DO UPDATE SET
-      displayName = excluded.displayName,
-      wellKnownName = excluded.wellKnownName,
-      depth = excluded.depth,
-      path = excluded.path
-  `);
-  for (const folder of GMAIL_SYSTEM_FOLDERS) {
-    upsertFolder.run(folder.id, accountId, folder.displayName, folder.wellKnownName, folder.depth, folder.path);
-  }
-}
-function gmailUpsertMessage(accountId, folderId, msg) {
-  const headers2 = msg.payload?.headers ?? [];
-  const fromRaw = gmailParseHeader(headers2, "From");
-  const { name: fromName, address: fromAddress } = gmailParseAddress(fromRaw);
-  const toRaw = gmailParseHeader(headers2, "To");
-  const toRecipients = toRaw ? JSON.stringify([{ emailAddress: gmailParseAddress(toRaw) }]) : "[]";
-  const ccRaw = gmailParseHeader(headers2, "Cc");
-  const ccRecipients = ccRaw ? JSON.stringify([{ emailAddress: gmailParseAddress(ccRaw) }]) : "[]";
-  const subject = gmailParseHeader(headers2, "Subject");
-  const dateRaw = gmailParseHeader(headers2, "Date");
-  const receivedDateTime = dateRaw ? new Date(dateRaw).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
-  const snippet2 = msg.snippet ?? "";
-  const isRead = !(msg.labelIds ?? []).includes("UNREAD") ? 1 : 0;
-  const isStarred = (msg.labelIds ?? []).includes("STARRED") ? 1 : 0;
-  const body = gmailExtractBody(msg.payload);
-  db.prepare(`
-    INSERT INTO emails (
-      id, accountId, folder, subject, bodyPreview, bodyContentType, bodyContent,
-      receivedDateTime, isRead, hasAttachments, isStarred, fromName, fromAddress,
-      toRecipients, ccRecipients
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      folder             = excluded.folder,
-      subject            = CASE WHEN excluded.subject <> '' THEN excluded.subject ELSE emails.subject END,
-      bodyPreview        = CASE WHEN excluded.bodyPreview <> '' THEN excluded.bodyPreview ELSE emails.bodyPreview END,
-      bodyContentType    = CASE WHEN excluded.bodyContentType <> '' THEN excluded.bodyContentType ELSE emails.bodyContentType END,
-      bodyContent        = CASE WHEN excluded.bodyContent <> '' THEN excluded.bodyContent ELSE emails.bodyContent END,
-      receivedDateTime   = excluded.receivedDateTime,
-      isRead             = excluded.isRead,
-      isStarred          = excluded.isStarred,
-      fromName           = excluded.fromName,
-      fromAddress        = excluded.fromAddress,
-      toRecipients       = excluded.toRecipients,
-      ccRecipients       = excluded.ccRecipients
-  `).run(
-    msg.id,
-    accountId,
-    folderId,
-    subject,
-    snippet2,
-    body.content ? body.contentType : "",
-    body.content,
-    receivedDateTime,
-    isRead,
-    isStarred,
-    fromName,
-    fromAddress,
-    toRecipients,
-    ccRecipients
-  );
-}
-async function gmailFetchMessagesForLabel(accessToken, accountId, labelId, maxMessages) {
-  const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-  listUrl.searchParams.set("labelIds", labelId);
-  listUrl.searchParams.set("maxResults", String(maxMessages));
-  const listResponse = await fetch(listUrl.toString(), {
-    headers: { Authorization: `Bearer ${accessToken}` }
-  });
-  if (!listResponse.ok) {
-    const err2 = await listResponse.text();
-    throw new Error(`Gmail messages list failed (${listResponse.status}): ${err2}`);
-  }
-  const listData = await listResponse.json();
-  const messageIds = (listData.messages ?? []).map((m) => m.id);
-  for (const messageId of messageIds) {
-    const msgUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`;
-    const msgResponse = await fetch(msgUrl, {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    });
-    if (!msgResponse.ok) {
-      console.warn(`Gmail fetch message ${messageId} failed (${msgResponse.status})`);
-      continue;
-    }
-    const msg = await msgResponse.json();
-    gmailUpsertMessage(accountId, labelId, msg);
-    await sleep(30);
-  }
-}
-function loadAiProviderKeys() {
-  try {
-    if (!fs$1.existsSync(aiProviderKeysFilePath)) {
-      return {};
-    }
-    const fileContents = fs$1.readFileSync(aiProviderKeysFilePath, "utf8");
-    if (!fileContents) {
-      return {};
-    }
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Secure AI key storage is not available on this system");
-    }
-    const decoded = safeStorage.decryptString(
-      Buffer.from(fileContents, "base64")
+function getMessageSyncFolders(folders) {
+  return [...folders].filter((folder) => !shouldSkipMessageSyncForFolder(folder)).sort((a, b) => {
+    const priorityDiff = getFolderSyncPriority(a) - getFolderSyncPriority(b);
+    if (priorityDiff !== 0) return priorityDiff;
+    return (a.path || a.displayName || "").localeCompare(
+      b.path || b.displayName || ""
     );
-    return JSON.parse(decoded);
-  } catch (error2) {
-    console.error("Failed to load stored AI provider keys:", error2);
-    return {};
-  }
-}
-function saveAiProviderKeys(keys) {
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error("Secure AI key storage is not available on this system");
-  }
-  const payload = JSON.stringify(keys);
-  const content = safeStorage.encryptString(payload).toString("base64");
-  fs$1.writeFileSync(aiProviderKeysFilePath, content, {
-    encoding: "utf8",
-    mode: 384
   });
-}
-function getAiProviderKeyStatus(provider) {
-  const stored = loadAiProviderKeys()[provider];
-  const environmentKey = provider === "gemini" ? process.env.GEMINI_API_KEY?.trim() : "";
-  return {
-    provider,
-    configured: Boolean(stored?.apiKey || environmentKey),
-    source: stored?.apiKey ? "local" : environmentKey ? "environment" : null,
-    updatedAt: stored?.updatedAt || null,
-    encryptionAvailable: safeStorage.isEncryptionAvailable()
-  };
-}
-async function exchangeRefreshToken(refreshToken, clientId, tenantId, scope) {
-  const authority = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0`;
-  const refreshParams = new URLSearchParams({
-    client_id: clientId,
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-    scope
-  });
-  const refreshResponse = await fetch(`${authority}/token`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: refreshParams.toString()
-  });
-  if (!refreshResponse.ok) {
-    const errorText = await refreshResponse.text();
-    throw new Error(
-      `Microsoft refresh token exchange failed (${refreshResponse.status}): ${errorText}`
-    );
-  }
-  return await refreshResponse.json();
-}
-const activeTokenRefreshPromises = /* @__PURE__ */ new Map();
-async function getValidMicrosoftAccessToken(accountId) {
-  const tokens = loadMicrosoftTokens();
-  const token = tokens[accountId];
-  if (!token) throw new Error("No Microsoft token stored for this account");
-  if (token.expiresAt > Date.now() + tokenRefreshLeadMs) {
-    return token.accessToken;
-  }
-  if (!token.refreshToken) {
-    throw new Error(
-      "Microsoft refresh token missing. Please reconnect the account."
-    );
-  }
-  const existing = activeTokenRefreshPromises.get(accountId);
-  if (existing) return existing;
-  const refreshPromise = (async () => {
-    try {
-      const { clientId, tenantId, scope } = getMicrosoftOAuthRefreshConfig(token);
-      const refreshed = await exchangeRefreshToken(
-        token.refreshToken,
-        clientId,
-        tenantId,
-        scope
-      );
-      const latestTokens = loadMicrosoftTokens();
-      latestTokens[accountId] = {
-        ...token,
-        accessToken: refreshed.access_token,
-        refreshToken: refreshed.refresh_token || token.refreshToken,
-        expiresAt: Date.now() + refreshed.expires_in * 1e3,
-        scope: refreshed.scope || token.scope,
-        tokenType: refreshed.token_type || token.tokenType,
-        clientId,
-        tenantId,
-        oauthScope: scope
-      };
-      saveMicrosoftTokens(latestTokens);
-      return latestTokens[accountId].accessToken;
-    } finally {
-      activeTokenRefreshPromises.delete(accountId);
-    }
-  })();
-  activeTokenRefreshPromises.set(accountId, refreshPromise);
-  return refreshPromise;
 }
 async function fetchGraphFolderMessagesDeltaPage(accessToken, url) {
   for (let attempt = 1; attempt <= maxGraphFetchAttempts; attempt += 1) {
@@ -63180,8 +62368,7 @@ async function syncFolderDelta(accessToken, accountId, folderId) {
     deletedCount
   };
 }
-async function syncMailboxInitialFull(accountId) {
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+async function syncMailboxInitialFull(accessToken, accountId) {
   const foldersResponse = await fetchGraphMailFolders(accessToken);
   const folders = Array.isArray(foldersResponse) ? foldersResponse : foldersResponse.value || [];
   const foldersToSync = getMessageSyncFolders(folders);
@@ -63213,8 +62400,7 @@ async function syncMailboxInitialFull(accountId) {
   }
   return { success: true };
 }
-async function syncMailboxTargetedDelta(accountId, folderIds) {
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+async function syncMailboxTargetedDelta(accessToken, accountId, folderIds) {
   const folders = getLocalFolders(accountId);
   const folderIdSet = new Set(folderIds.filter(Boolean));
   const foldersToSync = getMessageSyncFolders(folders).filter(
@@ -63243,8 +62429,7 @@ async function syncMailboxTargetedDelta(accountId, folderIds) {
   }
   return { success: true };
 }
-async function syncMailboxDelta(accountId) {
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+async function syncMailboxDelta(accessToken, accountId) {
   const foldersResponse = await fetchGraphMailFolders(accessToken);
   const folders = Array.isArray(foldersResponse) ? foldersResponse : foldersResponse.value || [];
   const foldersToSync = getMessageSyncFolders(folders);
@@ -63501,38 +62686,707 @@ async function fetchGraphMailFolders(accessToken) {
   await fetchFolderTree(rootUrl, 0, "");
   return { value: allFolders };
 }
-function getKnownFolderName(folder) {
-  if (folder.wellKnownName) {
-    return folder.wellKnownName.toLowerCase();
-  }
-  const id2 = folder.id.toLowerCase();
-  const displayName = folder.displayName.toLowerCase().replace(/\s+/g, "");
-  if (id2 === "inbox" || displayName === "inbox" || displayName === "indbakke" || displayName === "bandejadeentrada" || displayName === "boîtederéception")
-    return "inbox";
-  if (id2 === "sentitems" || displayName === "sentitems" || displayName === "sent" || displayName === "sendtpost" || displayName === "elementosenviados" || displayName === "élémentsenvoyés")
-    return "sentitems";
-  if (id2 === "drafts" || displayName === "drafts" || displayName === "kladder" || displayName === "borradores" || displayName === "brouillons")
-    return "drafts";
-  if (id2 === "archive" || displayName === "archive" || displayName === "arkiv" || displayName === "archivo")
-    return "archive";
-  if (id2 === "deleteditems" || displayName === "deleteditems" || displayName === "deleted" || displayName === "trash" || displayName === "papirkurv" || displayName === "elementoseliminados" || displayName === "élémentsupprimés") {
-    return "deleteditems";
-  }
-  return "";
+const GMAIL_SYSTEM_FOLDERS = [
+  { id: "INBOX", displayName: "Inbox", wellKnownName: "inbox", depth: 0, path: "Inbox" },
+  { id: "SENT", displayName: "Sent", wellKnownName: "sentitems", depth: 0, path: "Sent" },
+  { id: "DRAFT", displayName: "Drafts", wellKnownName: "drafts", depth: 0, path: "Drafts" },
+  { id: "ARCHIVE", displayName: "Archive", wellKnownName: "archive", depth: 0, path: "Archive" },
+  { id: "TRASH", displayName: "Trash", wellKnownName: "deleteditems", depth: 0, path: "Trash" },
+  { id: "STARRED", displayName: "Starred", wellKnownName: "", depth: 0, path: "Starred" },
+  { id: "SPAM", displayName: "Spam", wellKnownName: "junkmail", depth: 0, path: "Spam" }
+];
+function gmailParseHeader(headers2, name2) {
+  return headers2.find((h) => h.name.toLowerCase() === name2.toLowerCase())?.value ?? "";
 }
-function saveFoldersToLocalDb(accountId, folders) {
-  const folderUpsert = db.prepare(`
-    INSERT INTO folders (
-      id,
-      accountId,
-      displayName,
-      parentFolderId,
-      wellKnownName,
-      totalItemCount,
-      unreadItemCount,
-      depth,
-      path
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+function gmailParseAddress(raw) {
+  const match = /^(.*?)\s*<([^>]+)>$/.exec(raw.trim());
+  if (match) return { name: match[1].replace(/^"|"$/g, "").trim(), address: match[2].trim() };
+  return { name: "", address: raw.trim() };
+}
+function gmailExtractBody(part) {
+  if (!part) return { content: "", contentType: "text" };
+  if (part.parts && part.parts.length > 0) {
+    const htmlPart = part.parts.find((p) => p.mimeType === "text/html");
+    const textPart = part.parts.find((p) => p.mimeType === "text/plain");
+    for (const candidate of [htmlPart, textPart]) {
+      if (!candidate) continue;
+      if (candidate.body?.data) {
+        const decoded = Buffer.from(candidate.body.data, "base64").toString("utf8");
+        return { content: decoded, contentType: candidate.mimeType === "text/html" ? "html" : "text" };
+      }
+      if (candidate.parts) {
+        const nested = gmailExtractBody(candidate);
+        if (nested.content) return nested;
+      }
+    }
+  }
+  if (part.body?.data) {
+    const decoded = Buffer.from(part.body.data, "base64").toString("utf8");
+    return { content: decoded, contentType: part.mimeType === "text/html" ? "html" : "text" };
+  }
+  return { content: "", contentType: "text" };
+}
+function gmailUpsertFolders(accountId) {
+  const upsertFolder = db.prepare(`
+    INSERT INTO folders (id, accountId, displayName, parentFolderId, wellKnownName, totalItemCount, unreadItemCount, depth, path)
+    VALUES (?, ?, ?, NULL, ?, 0, 0, ?, ?)
+    ON CONFLICT(accountId, id) DO UPDATE SET
+      displayName = excluded.displayName,
+      wellKnownName = excluded.wellKnownName,
+      depth = excluded.depth,
+      path = excluded.path
+  `);
+  for (const folder of GMAIL_SYSTEM_FOLDERS) {
+    upsertFolder.run(folder.id, accountId, folder.displayName, folder.wellKnownName, folder.depth, folder.path);
+  }
+}
+function gmailUpsertMessage(accountId, folderId, msg) {
+  const headers2 = msg.payload?.headers ?? [];
+  const fromRaw = gmailParseHeader(headers2, "From");
+  const { name: fromName, address: fromAddress } = gmailParseAddress(fromRaw);
+  const toRaw = gmailParseHeader(headers2, "To");
+  const toRecipients = toRaw ? JSON.stringify([{ emailAddress: gmailParseAddress(toRaw) }]) : "[]";
+  const ccRaw = gmailParseHeader(headers2, "Cc");
+  const ccRecipients = ccRaw ? JSON.stringify([{ emailAddress: gmailParseAddress(ccRaw) }]) : "[]";
+  const subject = gmailParseHeader(headers2, "Subject");
+  const dateRaw = gmailParseHeader(headers2, "Date");
+  const receivedDateTime = dateRaw ? new Date(dateRaw).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
+  const snippet2 = msg.snippet ?? "";
+  const isRead = !(msg.labelIds ?? []).includes("UNREAD") ? 1 : 0;
+  const isStarred = (msg.labelIds ?? []).includes("STARRED") ? 1 : 0;
+  const body = gmailExtractBody(msg.payload);
+  db.prepare(`
+    INSERT INTO emails (
+      id, accountId, folder, subject, bodyPreview, bodyContentType, bodyContent,
+      receivedDateTime, isRead, hasAttachments, isStarred, fromName, fromAddress,
+      toRecipients, ccRecipients
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      folder             = excluded.folder,
+      subject            = CASE WHEN excluded.subject <> '' THEN excluded.subject ELSE emails.subject END,
+      bodyPreview        = CASE WHEN excluded.bodyPreview <> '' THEN excluded.bodyPreview ELSE emails.bodyPreview END,
+      bodyContentType    = CASE WHEN excluded.bodyContentType <> '' THEN excluded.bodyContentType ELSE emails.bodyContentType END,
+      bodyContent        = CASE WHEN excluded.bodyContent <> '' THEN excluded.bodyContent ELSE emails.bodyContent END,
+      receivedDateTime   = excluded.receivedDateTime,
+      isRead             = excluded.isRead,
+      isStarred          = excluded.isStarred,
+      fromName           = excluded.fromName,
+      fromAddress        = excluded.fromAddress,
+      toRecipients       = excluded.toRecipients,
+      ccRecipients       = excluded.ccRecipients
+  `).run(
+    msg.id,
+    accountId,
+    folderId,
+    subject,
+    snippet2,
+    body.content ? body.contentType : "",
+    body.content,
+    receivedDateTime,
+    isRead,
+    isStarred,
+    fromName,
+    fromAddress,
+    toRecipients,
+    ccRecipients
+  );
+}
+async function gmailFetchMessagesForLabel(accessToken, accountId, labelId, maxMessages) {
+  const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+  listUrl.searchParams.set("labelIds", labelId);
+  listUrl.searchParams.set("maxResults", String(maxMessages));
+  const listResponse = await fetch(listUrl.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (!listResponse.ok) {
+    const err2 = await listResponse.text();
+    throw new Error(`Gmail messages list failed (${listResponse.status}): ${err2}`);
+  }
+  const listData = await listResponse.json();
+  const messageIds = (listData.messages ?? []).map((m) => m.id);
+  for (const messageId of messageIds) {
+    const msgUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`;
+    const msgResponse = await fetch(msgUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    if (!msgResponse.ok) {
+      console.warn(`Gmail fetch message ${messageId} failed (${msgResponse.status})`);
+      continue;
+    }
+    const msg = await msgResponse.json();
+    gmailUpsertMessage(accountId, labelId, msg);
+    await sleep(30);
+  }
+}
+function isValidAccountId(value) {
+  return /^(ms|google|imap)-[A-Za-z0-9._-]+$/.test(value);
+}
+const allowedMoveDestinations = /* @__PURE__ */ new Set([
+  "inbox",
+  "sentitems",
+  "drafts",
+  "archive",
+  "deleteditems"
+]);
+const allowedFolderIcons = /* @__PURE__ */ new Set([
+  "folder",
+  "briefcase",
+  "users",
+  "star",
+  "heart",
+  "home",
+  "receipt",
+  "shopping",
+  "travel",
+  "code",
+  "bank",
+  "alert",
+  "archive",
+  "tag"
+]);
+function escapeHtml(value) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function assertString(value, fieldName, maxLength = 4096) {
+  if (typeof value !== "string") {
+    throw new Error(`${fieldName} must be a string`);
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${fieldName} is required`);
+  }
+  if (trimmed.length > maxLength) {
+    throw new Error(`${fieldName} is too long`);
+  }
+  return trimmed;
+}
+function optionalString(value, fieldName, maxLength = 4096) {
+  if (value === void 0 || value === null) {
+    return "";
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${fieldName} must be a string`);
+  }
+  if (value.length > maxLength) {
+    throw new Error(`${fieldName} is too long`);
+  }
+  return value;
+}
+function validateAccountId(accountId) {
+  const value = assertString(accountId, "accountId", 256);
+  if (!isValidAccountId(value)) {
+    throw new Error("Invalid accountId");
+  }
+  return value;
+}
+function validateMessageId(messageId) {
+  return assertString(messageId, "messageId", 2048);
+}
+function validateLabelId(labelId) {
+  const value = assertString(labelId, "labelId", 128);
+  if (!/^label-[A-Za-z0-9._-]+$/.test(value)) {
+    throw new Error("Invalid labelId");
+  }
+  return value;
+}
+function validateLabelName(name2) {
+  const value = assertString(name2, "name", 64).replace(/\s+/g, " ").trim();
+  if (value.length < 2) {
+    throw new Error("Label name must be at least 2 characters");
+  }
+  return value;
+}
+function validateFolderName(name2) {
+  const value = assertString(name2, "folderName", 64).replace(/\s+/g, " ").trim();
+  if (value.length < 2) {
+    throw new Error("Folder name must be at least 2 characters");
+  }
+  const reservedNames = /* @__PURE__ */ new Set([
+    "inbox",
+    "sent",
+    "sent items",
+    "drafts",
+    "archive",
+    "deleted items",
+    "trash",
+    "junk",
+    "junk email",
+    "outbox"
+  ]);
+  if (reservedNames.has(value.toLowerCase())) {
+    throw new Error("That folder name is reserved by the mail provider.");
+  }
+  if (/[\\/:*?"<>|]/.test(value)) {
+    throw new Error("Folder name contains invalid characters.");
+  }
+  return value;
+}
+function validateLabelColor(color) {
+  const value = optionalString(color, "color", 16).trim() || "#C9A84C";
+  if (!/^#[0-9A-Fa-f]{6}$/.test(value)) {
+    throw new Error("Invalid label color");
+  }
+  return value;
+}
+function validateFolderId(folderId) {
+  return assertString(folderId, "folderId", 2048);
+}
+function validateFolderIcon(icon) {
+  const value = optionalString(icon, "icon", 64).trim();
+  if (!value) {
+    return "folder";
+  }
+  if (!allowedFolderIcons.has(value)) {
+    throw new Error("Invalid folder icon");
+  }
+  return value;
+}
+function validateDestinationFolder(destinationFolder) {
+  const folder = assertString(
+    destinationFolder,
+    "destinationFolder",
+    64
+  ).toLowerCase();
+  if (!allowedMoveDestinations.has(folder)) {
+    throw new Error("Invalid destination folder");
+  }
+  return folder;
+}
+function sanitizeOutgoingHtml(html) {
+  return html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<iframe[\s\S]*?<\/iframe>/gi, "").replace(/<object[\s\S]*?<\/object>/gi, "").replace(/<embed[\s\S]*?>/gi, "").replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, "").replace(/(href|src|action)\s*=\s*["']?\s*(?:javascript|vbscript)\s*:[^"'>]*/gi, "");
+}
+function stripHtmlForAi(input) {
+  return input.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/\s+/g, " ").trim();
+}
+function limitAiInput(value, maxLength = 12e3) {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength)}
+
+[Email content truncated for privacy and performance.]`;
+}
+function extractJsonObject(value) {
+  const trimmed = value.trim();
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const candidate = fencedMatch?.[1] || trimmed;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    return null;
+  }
+  return candidate.slice(start, end + 1);
+}
+function normalizeAiSummaryResult(rawText) {
+  const jsonText = extractJsonObject(rawText);
+  if (jsonText) {
+    try {
+      const parsed = JSON.parse(jsonText);
+      const summary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
+      const keyPoints = Array.isArray(parsed.keyPoints) ? parsed.keyPoints.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean).slice(0, 5) : [];
+      const suggestedActions = Array.isArray(parsed.suggestedActions) ? parsed.suggestedActions.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean).slice(0, 3) : [];
+      if (summary || keyPoints.length > 0 || suggestedActions.length > 0) {
+        return {
+          summary,
+          keyPoints,
+          suggestedActions
+        };
+      }
+    } catch {
+    }
+  }
+  return {
+    summary: rawText.trim(),
+    keyPoints: [],
+    suggestedActions: []
+  };
+}
+function validateAiEmailPayload(payload) {
+  return {
+    subject: optionalString(payload?.subject, "subject", 512),
+    senderName: optionalString(payload?.senderName, "senderName", 256),
+    senderEmail: optionalString(payload?.senderEmail, "senderEmail", 512),
+    body: optionalString(payload?.body, "body", 5e5),
+    preview: optionalString(payload?.preview, "preview", 5e3)
+  };
+}
+function validateAiReplyPayload(payload) {
+  return {
+    ...validateAiEmailPayload(payload),
+    tone: optionalString(payload?.tone, "tone", 32).toLowerCase()
+  };
+}
+function normalizeAiReplyResult(rawText) {
+  const jsonText = extractJsonObject(rawText);
+  if (jsonText) {
+    try {
+      const parsed = JSON.parse(jsonText);
+      const reply = typeof parsed.reply === "string" ? parsed.reply.trim() : "";
+      if (reply) return reply;
+    } catch {
+    }
+  }
+  return rawText.trim();
+}
+function sanitizeBackendSettings(settings) {
+  const value = settings && typeof settings === "object" ? settings : {};
+  const aiProvider = optionalString(value.aiProvider, "aiProvider", 32).trim();
+  const geminiModel = optionalString(value.geminiModel, "geminiModel", 64).trim();
+  const ollamaBaseUrl = optionalString(value.ollamaBaseUrl, "ollamaBaseUrl", 512).trim();
+  const ollamaModel = optionalString(value.ollamaModel, "ollamaModel", 128).trim();
+  return {
+    aiProvider: aiProvider === "ollama" ? "ollama" : "gemini",
+    geminiModel: geminiModel || "gemini-2.5-flash",
+    ollamaBaseUrl: ollamaBaseUrl || "http://127.0.0.1:11434",
+    ollamaModel: ollamaModel || "llama3.2"
+  };
+}
+function sanitizeDraftsPayload(drafts) {
+  if (!Array.isArray(drafts)) {
+    throw new Error("drafts must be an array");
+  }
+  return drafts.slice(0, 20).map((draft, index) => {
+    const value = draft && typeof draft === "object" ? draft : {};
+    const id2 = optionalString(value.id, `drafts[${index}].id`, 128).trim();
+    return {
+      id: id2 || `draft-${crypto.randomUUID()}`,
+      to: optionalString(value.to, `drafts[${index}].to`, 4096),
+      cc: optionalString(value.cc, `drafts[${index}].cc`, 4096),
+      subject: optionalString(value.subject, `drafts[${index}].subject`, 512),
+      body: sanitizeOutgoingHtml(
+        optionalString(value.body, `drafts[${index}].body`, 5e5)
+      ),
+      isMinimized: Boolean(value.isMinimized),
+      isFullscreen: Boolean(value.isFullscreen),
+      scheduledSendAt: optionalString(value.scheduledSendAt, `drafts[${index}].scheduledSendAt`, 64) || void 0,
+      aiTone: optionalString(value.aiTone, `drafts[${index}].aiTone`, 32) || void 0,
+      aiHint: optionalString(value.aiHint, `drafts[${index}].aiHint`, 2048) || void 0
+    };
+  });
+}
+function parseRecipients(emailsString) {
+  if (!emailsString) return [];
+  return emailsString.split(",").map((email) => email.trim()).filter(Boolean).map((email) => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error(`Invalid email address: ${email}`);
+    }
+    return {
+      emailAddress: {
+        address: email
+      }
+    };
+  });
+}
+const electronApi = electron.default ?? electron;
+const { app, BrowserWindow, ipcMain, shell, safeStorage, dialog } = electronApi;
+if (!app.isPackaged) {
+  mainExports.config();
+}
+const __filename$1 = fileURLToPath(import.meta.url);
+const __dirname$1 = path.dirname(__filename$1);
+const stateFilePath = path.join(app.getPath("userData"), "window-state.json");
+const settingsFilePath = path.join(app.getPath("userData"), "ryze-settings.json");
+const microsoftTokenFilePath = path.join(
+  app.getPath("userData"),
+  "microsoft-oauth-tokens.json"
+);
+const googleTokenFilePath = path.join(
+  app.getPath("userData"),
+  "google-oauth-tokens.json"
+);
+const aiProviderKeysFilePath = path.join(
+  app.getPath("userData"),
+  "ai-provider-keys.json"
+);
+const imapAccountsFilePath = path.join(
+  app.getPath("userData"),
+  "imap-accounts.json"
+);
+const activeFullSyncs = /* @__PURE__ */ new Map();
+const oauthTimeoutMs = 2 * 60 * 1e3;
+const tokenRefreshLeadMs = 60 * 1e3;
+mainExports$1.autoUpdater.autoDownload = false;
+mainExports$1.autoUpdater.autoInstallOnAppQuit = true;
+mainExports$1.autoUpdater.logger = console;
+ipcMain.handle("app:get-version", () => app.getVersion());
+ipcMain.handle("updater:check", () => {
+  if (app.isPackaged) {
+    mainExports$1.autoUpdater.checkForUpdates();
+  }
+  return true;
+});
+ipcMain.handle("updater:start-download", () => {
+  mainExports$1.autoUpdater.downloadUpdate();
+  return true;
+});
+ipcMain.handle("updater:install", () => {
+  mainExports$1.autoUpdater.quitAndInstall(true, true);
+  return true;
+});
+mainExports$1.autoUpdater.on("update-available", (info) => {
+  const windows = BrowserWindow.getAllWindows();
+  if (windows.length > 0) {
+    windows[0].webContents.send("updater:available", info.version);
+  }
+});
+mainExports$1.autoUpdater.on("update-downloaded", () => {
+  const windows = BrowserWindow.getAllWindows();
+  if (windows.length > 0) {
+    windows[0].webContents.send("updater:downloaded");
+  }
+});
+mainExports$1.autoUpdater.on("update-not-available", () => {
+  console.log("[updater] No update available — already on latest version.");
+});
+mainExports$1.autoUpdater.on("error", (err2) => {
+  console.error("[updater] Error:", err2.message);
+  const windows = BrowserWindow.getAllWindows();
+  if (windows.length > 0) {
+    windows[0].webContents.send("updater:error", err2.message);
+  }
+});
+function getGeminiApiKey() {
+  const storedKey = loadAiProviderKeys().gemini?.apiKey?.trim();
+  const apiKey = storedKey || process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error(
+      "Gemini API key is missing. Add it in Settings > AI & keys."
+    );
+  }
+  return apiKey;
+}
+function getGeminiModel() {
+  const rawModel = loadBackendSettings().geminiModel || process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
+  return rawModel.replace(/^models\//, "");
+}
+function getAiProvider() {
+  const provider = loadBackendSettings().aiProvider;
+  return provider === "ollama" ? "ollama" : "gemini";
+}
+function getOllamaConfig() {
+  const settings = loadBackendSettings();
+  const baseUrl = (settings.ollamaBaseUrl || "http://127.0.0.1:11434").trim();
+  const model = (settings.ollamaModel || "llama3.2").trim();
+  if (!model) {
+    throw new Error("Ollama model is missing. Add it in Settings > AI & keys.");
+  }
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(baseUrl);
+  } catch {
+    throw new Error("Ollama server URL is invalid.");
+  }
+  const isLocalHost = parsedUrl.hostname === "localhost" || parsedUrl.hostname === "127.0.0.1" || parsedUrl.hostname === "::1";
+  if (parsedUrl.protocol !== "http:" || !isLocalHost) {
+    throw new Error("Ollama server URL must be a local http URL.");
+  }
+  return {
+    baseUrl: parsedUrl.origin,
+    model
+  };
+}
+function loadBackendSettings() {
+  try {
+    if (!fs$1.existsSync(settingsFilePath)) {
+      return {};
+    }
+    const parsed = JSON.parse(fs$1.readFileSync(settingsFilePath, "utf8"));
+    return typeof parsed === "object" && parsed ? parsed : {};
+  } catch (error2) {
+    console.error("Failed to load backend settings:", error2);
+    return {};
+  }
+}
+function getGeminiApiVersion() {
+  return process.env.GEMINI_API_VERSION?.trim() || "v1";
+}
+function toBase64Url(value) {
+  const base = Buffer.isBuffer(value) ? value.toString("base64") : Buffer.from(value).toString("base64");
+  return base.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+function getMicrosoftOAuthEnv() {
+  const clientId = "b32a0e59-d61f-4655-981c-a18266e0af4f"?.trim() || "b32a0e59-d61f-4655-981c-a18266e0af4f"?.trim();
+  const tenantId = "common"?.trim() || "common";
+  const redirectUri = "http://127.0.0.1:42813/auth/microsoft/callback"?.trim() || "http://127.0.0.1:42813/auth/microsoft/callback"?.trim() || "http://127.0.0.1:42813/auth/microsoft/callback";
+  const scope = "openid profile offline_access User.Read Mail.Read Mail.ReadWrite Mail.Send Calendars.Read"?.trim() || "openid profile offline_access User.Read Mail.Read Mail.ReadWrite Mail.Send Calendars.Read";
+  if (!clientId) {
+    throw new Error("Missing MICROSOFT_OAUTH_CLIENT_ID");
+  }
+  if (!/^[0-9a-fA-F-]{36}$/.test(clientId)) {
+    throw new Error(
+      "MICROSOFT_OAUTH_CLIENT_ID must be the Azure Application client ID GUID, not a client secret value"
+    );
+  }
+  const parsedRedirect = new URL(redirectUri);
+  if (!["127.0.0.1", "localhost"].includes(parsedRedirect.hostname) || parsedRedirect.protocol !== "http:") {
+    throw new Error(
+      "MICROSOFT_OAUTH_REDIRECT_URI must be a localhost loopback URL"
+    );
+  }
+  if (!parsedRedirect.port) {
+    throw new Error(
+      "MICROSOFT_OAUTH_REDIRECT_URI must include an explicit port, for example: http://127.0.0.1:42813/auth/microsoft/callback"
+    );
+  }
+  return {
+    clientId,
+    tenantId,
+    redirectUri,
+    scope
+  };
+}
+function getMicrosoftOAuthRefreshConfig(token) {
+  const clientId = token.clientId?.trim();
+  const tenantId = token.tenantId?.trim();
+  const scope = token.oauthScope?.trim();
+  if (clientId && tenantId && scope) {
+    if (!/^[0-9a-fA-F-]{36}$/.test(clientId)) {
+      throw new Error(
+        "Stored Microsoft OAuth client ID is invalid. Please reconnect the account."
+      );
+    }
+    return {
+      clientId,
+      tenantId,
+      scope
+    };
+  }
+  try {
+    const env = getMicrosoftOAuthEnv();
+    return {
+      clientId: env.clientId,
+      tenantId: env.tenantId,
+      scope: env.scope
+    };
+  } catch (error2) {
+    if (error2 instanceof Error && error2.message === "Missing MICROSOFT_OAUTH_CLIENT_ID") {
+      throw new Error(
+        "Microsoft OAuth config is missing and this account token needs refresh. Please reconnect the account."
+      );
+    }
+    throw error2;
+  }
+}
+function loadMicrosoftTokens() {
+  try {
+    if (!fs$1.existsSync(microsoftTokenFilePath)) {
+      return {};
+    }
+    const fileContents = fs$1.readFileSync(microsoftTokenFilePath, "utf8");
+    if (!fileContents) {
+      return {};
+    }
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("Secure token storage is not available on this system");
+    }
+    const decoded = safeStorage.decryptString(
+      Buffer.from(fileContents, "base64")
+    );
+    return JSON.parse(decoded);
+  } catch (error2) {
+    console.error("Failed to load stored Microsoft tokens:", error2);
+    return {};
+  }
+}
+function saveMicrosoftTokens(tokens) {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("Secure token storage is not available on this system");
+    }
+    const payload = JSON.stringify(tokens);
+    const content = safeStorage.encryptString(payload).toString("base64");
+    fs$1.writeFileSync(microsoftTokenFilePath, content, {
+      encoding: "utf8",
+      mode: 384
+    });
+  } catch (error2) {
+    console.error("Failed to save Microsoft tokens:", error2);
+    throw error2;
+  }
+}
+const GOOGLE_CLIENT_ID = "224714941754-dmhs2n3lmljpgajk3qak2glsoqdtl6ea.apps.googleusercontent.com";
+const GOOGLE_CLIENT_SECRET = "";
+const GOOGLE_REDIRECT_URI = "http://127.0.0.1:53682";
+const GOOGLE_SCOPE = "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send";
+function loadGoogleTokens() {
+  try {
+    if (!fs$1.existsSync(googleTokenFilePath)) return {};
+    const fileContents = fs$1.readFileSync(googleTokenFilePath, "utf8");
+    if (!fileContents) return {};
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("Secure token storage is not available on this system");
+    }
+    const decoded = safeStorage.decryptString(Buffer.from(fileContents, "base64"));
+    return JSON.parse(decoded);
+  } catch (error2) {
+    console.error("Failed to load stored Google tokens:", error2);
+    return {};
+  }
+}
+function saveGoogleTokens(tokens) {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("Secure token storage is not available on this system");
+    }
+    const content = safeStorage.encryptString(JSON.stringify(tokens)).toString("base64");
+    fs$1.writeFileSync(googleTokenFilePath, content, { encoding: "utf8", mode: 384 });
+  } catch (error2) {
+    console.error("Failed to save Google tokens:", error2);
+    throw error2;
+  }
+}
+function loadImapAccounts() {
+  try {
+    if (!fs$1.existsSync(imapAccountsFilePath)) return {};
+    const fileContents = fs$1.readFileSync(imapAccountsFilePath, "utf8");
+    if (!fileContents) return {};
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("Secure IMAP account storage is not available on this system");
+    }
+    const decoded = safeStorage.decryptString(Buffer.from(fileContents, "base64"));
+    return JSON.parse(decoded);
+  } catch (error2) {
+    console.error("Failed to load stored IMAP accounts:", error2);
+    return {};
+  }
+}
+function saveImapAccounts(accounts) {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("Secure IMAP account storage is not available on this system");
+    }
+    const content = safeStorage.encryptString(JSON.stringify(accounts)).toString("base64");
+    fs$1.writeFileSync(imapAccountsFilePath, content, { encoding: "utf8", mode: 384 });
+  } catch (error2) {
+    console.error("Failed to save IMAP accounts:", error2);
+    throw error2;
+  }
+}
+function upsertImapSystemFolders(accountId) {
+  const folders = [
+    { id: "INBOX", displayName: "Inbox", wellKnownName: "inbox", path: "Inbox" },
+    { id: "Sent", displayName: "Sent", wellKnownName: "sentitems", path: "Sent" },
+    { id: "Drafts", displayName: "Drafts", wellKnownName: "drafts", path: "Drafts" },
+    { id: "Archive", displayName: "Archive", wellKnownName: "archive", path: "Archive" },
+    { id: "Trash", displayName: "Trash", wellKnownName: "deleteditems", path: "Trash" },
+    { id: "Junk", displayName: "Junk", wellKnownName: "junkmail", path: "Junk" }
+  ];
+  const statement = db.prepare(`
+    INSERT INTO folders (id, accountId, displayName, parentFolderId, wellKnownName, totalItemCount, unreadItemCount, depth, path)
+    VALUES (@id, @accountId, @displayName, NULL, @wellKnownName, 0, 0, 0, @path)
+    ON CONFLICT(accountId, id) DO UPDATE SET
+      displayName = excluded.displayName,
+      wellKnownName = excluded.wellKnownName,
+      path = excluded.path
+  `);
+  db.transaction(() => {
+    for (const folder of folders) {
+      statement.run({ ...folder, accountId });
+    }
+  })();
+}
+function upsertImapFolders(rows) {
+  const statement = db.prepare(`
+    INSERT INTO folders (id, accountId, displayName, parentFolderId, wellKnownName, totalItemCount, unreadItemCount, depth, path)
+    VALUES (@id, @accountId, @displayName, @parentFolderId, @wellKnownName, @totalItemCount, @unreadItemCount, @depth, @path)
     ON CONFLICT(accountId, id) DO UPDATE SET
       displayName = excluded.displayName,
       parentFolderId = excluded.parentFolderId,
@@ -63542,124 +63396,275 @@ function saveFoldersToLocalDb(accountId, folders) {
       depth = excluded.depth,
       path = excluded.path
   `);
-  const insertFolders = db.transaction((foldersList) => {
-    for (const folder of foldersList) {
-      folderUpsert.run(
-        folder.id,
-        accountId,
-        folder.displayName || "Folder",
-        folder.parentFolderId || "",
-        getKnownFolderName(folder),
-        folder.totalItemCount || 0,
-        folder.unreadItemCount || 0,
-        folder.depth || 0,
-        folder.path || folder.displayName || "Folder"
-      );
+  db.transaction(() => {
+    for (const row of rows) {
+      statement.run(row);
     }
-  });
-  insertFolders(folders);
+  })();
 }
-function accountHasAnyLocalMessages(accountId) {
-  const row = db.prepare(
-    `
-      SELECT id
-      FROM emails
-      WHERE accountId = ?
-      LIMIT 1
-    `
-  ).get(accountId);
-  return Boolean(row);
+function upsertImapMessage(row) {
+  db.prepare(`
+    INSERT INTO emails (
+      id, accountId, folder, subject, bodyPreview, bodyContentType, bodyContent,
+      receivedDateTime, isRead, hasAttachments, isStarred, fromName, fromAddress,
+      toRecipients, ccRecipients
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      accountId = excluded.accountId,
+      folder = excluded.folder,
+      subject = excluded.subject,
+      bodyPreview = excluded.bodyPreview,
+      bodyContentType = excluded.bodyContentType,
+      bodyContent = excluded.bodyContent,
+      receivedDateTime = excluded.receivedDateTime,
+      isRead = excluded.isRead,
+      hasAttachments = excluded.hasAttachments,
+      isStarred = excluded.isStarred,
+      fromName = excluded.fromName,
+      fromAddress = excluded.fromAddress,
+      toRecipients = excluded.toRecipients,
+      ccRecipients = excluded.ccRecipients
+  `).run(
+    row.id,
+    row.accountId,
+    row.folder,
+    row.subject,
+    row.bodyPreview,
+    row.bodyContentType,
+    row.bodyContent,
+    row.receivedDateTime,
+    row.isRead,
+    row.hasAttachments,
+    row.isStarred,
+    row.fromName,
+    row.fromAddress,
+    row.toRecipients,
+    row.ccRecipients
+  );
 }
-function shouldRunInitialFullSync(accountId) {
-  return !accountHasAnyDeltaState(accountId) || !accountHasAnyLocalMessages(accountId);
-}
-function accountHasAnyDeltaState(accountId) {
-  const row = db.prepare(
-    `
-      SELECT folderId
-      FROM folder_sync_state
-      WHERE accountId = ?
-      LIMIT 1
-    `
-  ).get(accountId);
-  return Boolean(row);
-}
-function rowsToMessages(rows) {
-  return rows.map((row) => ({
-    id: row.id,
-    subject: row.subject,
-    bodyPreview: row.bodyPreview,
-    body: row.bodyContentType ? {
-      contentType: row.bodyContentType,
-      content: row.bodyContent
-    } : void 0,
-    receivedDateTime: row.receivedDateTime,
-    isRead: Boolean(row.isRead),
-    hasAttachments: Boolean(row.hasAttachments),
-    attachments: JSON.parse(row.attachments || "[]"),
-    isStarred: Boolean(row.isStarred),
-    from: {
-      emailAddress: {
-        name: row.fromName,
-        address: row.fromAddress
-      }
-    },
-    toRecipients: JSON.parse(row.toRecipients || "[]"),
-    ccRecipients: JSON.parse(row.ccRecipients || "[]"),
-    snoozedUntil: row.snoozedUntil || null
-  }));
-}
-function getLocalFolders(accountId) {
-  return db.prepare(
-    `
-      SELECT *
-      FROM folders
-      WHERE accountId = ?
-      ORDER BY path COLLATE NOCASE ASC
-    `
-  ).all(accountId);
-}
-function getLocalMessagesByFolder(accountId) {
-  const folders = getLocalFolders(accountId);
-  const messagesByFolder = {};
-  for (const folder of folders) {
-    const rows = db.prepare(
-      `
-    SELECT
-      id,
-      accountId,
-      folder,
-      subject,
-      bodyPreview,
-      bodyContentType,
-      bodyContent,
-      receivedDateTime,
-      isRead,
-      hasAttachments,
-      isStarred,
-      attachments,
-      fromName,
-      fromAddress,
-      toRecipients,
-      ccRecipients
-    FROM emails
-    WHERE accountId = ? AND folder = ?
-    ORDER BY receivedDateTime DESC
-  `
-    ).all(accountId, folder.id);
-    messagesByFolder[folder.id] = rowsToMessages(rows);
+async function syncImapAccount(accountId) {
+  const accounts = loadImapAccounts();
+  const config2 = accounts[accountId];
+  if (!config2) {
+    throw new Error("No IMAP account stored for this account.");
   }
-  return messagesByFolder;
+  const client = new imapFlowExports.ImapFlow({
+    host: config2.host,
+    port: config2.port,
+    secure: config2.secure,
+    auth: {
+      user: config2.username,
+      pass: config2.password
+    },
+    logger: false
+  });
+  try {
+    await client.connect();
+    const mailboxes = await client.list();
+    const folderRows = buildImapFolderRows(accountId, mailboxes);
+    upsertImapFolders(folderRows);
+    const inboxFolder = folderRows.find((folder) => folder.wellKnownName === "inbox") || folderRows.find((folder) => normalizeImapMailboxPath(folder.id).toUpperCase() === "INBOX");
+    if (!inboxFolder) {
+      return {
+        folders: getLocalFolders(accountId),
+        messagesByFolder: getLocalMessagesByFolder(accountId),
+        syncedCount: 0
+      };
+    }
+    const mailbox = await client.mailboxOpen(inboxFolder.id, { readOnly: true });
+    const exists = Number(mailbox.exists || 0);
+    const start = Math.max(1, exists - 49);
+    let syncedCount = 0;
+    if (exists > 0) {
+      for await (const message of client.fetch(
+        `${start}:*`,
+        {
+          uid: true,
+          envelope: true,
+          flags: true,
+          source: true
+        },
+        { uid: false }
+      )) {
+        const mapped = mapImapMessageToLocalMessage({
+          accountId,
+          folderId: inboxFolder.id,
+          uid: message.uid,
+          flags: message.flags,
+          envelope: message.envelope,
+          source: message.source
+        });
+        upsertImapMessage(mapped);
+        syncedCount += 1;
+      }
+    }
+    saveFolderSyncState(accountId, inboxFolder.id, "", "full");
+    return {
+      folders: getLocalFolders(accountId),
+      messagesByFolder: getLocalMessagesByFolder(accountId),
+      syncedCount
+    };
+  } finally {
+    await client.logout().catch(() => void 0);
+  }
 }
-function getLocalLabels(accountId) {
-  return db.prepare(
-    `
-      SELECT id, accountId, name, color, createdAt, updatedAt
-      FROM labels
-      WHERE accountId = ?
-      ORDER BY name COLLATE NOCASE ASC
-    `
-  ).all(accountId);
+const activeGoogleTokenRefreshPromises = /* @__PURE__ */ new Map();
+async function getValidGoogleAccessToken(accountId) {
+  const tokens = loadGoogleTokens();
+  const token = tokens[accountId];
+  if (!token) throw new Error("No Google token stored for this account");
+  if (token.expiresAt > Date.now() + tokenRefreshLeadMs) return token.accessToken;
+  if (!token.refreshToken) {
+    throw new Error("Google refresh token missing. Please reconnect the account.");
+  }
+  const existing = activeGoogleTokenRefreshPromises.get(accountId);
+  if (existing) return existing;
+  const refreshPromise = (async () => {
+    try {
+      const clientId = token.clientId || GOOGLE_CLIENT_ID;
+      const params = buildGoogleRefreshTokenParams({
+        clientId,
+        clientSecret: GOOGLE_CLIENT_SECRET,
+        refreshToken: token.refreshToken
+      });
+      const response = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString()
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(formatGoogleTokenExchangeError(response.status, errorText));
+      }
+      const refreshed = await response.json();
+      const latestTokens = loadGoogleTokens();
+      latestTokens[accountId] = {
+        ...token,
+        accessToken: refreshed.access_token,
+        expiresAt: Date.now() + refreshed.expires_in * 1e3,
+        scope: refreshed.scope || token.scope,
+        tokenType: refreshed.token_type || token.tokenType,
+        clientId
+      };
+      saveGoogleTokens(latestTokens);
+      return latestTokens[accountId].accessToken;
+    } finally {
+      activeGoogleTokenRefreshPromises.delete(accountId);
+    }
+  })();
+  activeGoogleTokenRefreshPromises.set(accountId, refreshPromise);
+  return refreshPromise;
+}
+function loadAiProviderKeys() {
+  try {
+    if (!fs$1.existsSync(aiProviderKeysFilePath)) {
+      return {};
+    }
+    const fileContents = fs$1.readFileSync(aiProviderKeysFilePath, "utf8");
+    if (!fileContents) {
+      return {};
+    }
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("Secure AI key storage is not available on this system");
+    }
+    const decoded = safeStorage.decryptString(
+      Buffer.from(fileContents, "base64")
+    );
+    return JSON.parse(decoded);
+  } catch (error2) {
+    console.error("Failed to load stored AI provider keys:", error2);
+    return {};
+  }
+}
+function saveAiProviderKeys(keys) {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error("Secure AI key storage is not available on this system");
+  }
+  const payload = JSON.stringify(keys);
+  const content = safeStorage.encryptString(payload).toString("base64");
+  fs$1.writeFileSync(aiProviderKeysFilePath, content, {
+    encoding: "utf8",
+    mode: 384
+  });
+}
+function getAiProviderKeyStatus(provider) {
+  const stored = loadAiProviderKeys()[provider];
+  const environmentKey = provider === "gemini" ? process.env.GEMINI_API_KEY?.trim() : "";
+  return {
+    provider,
+    configured: Boolean(stored?.apiKey || environmentKey),
+    source: stored?.apiKey ? "local" : environmentKey ? "environment" : null,
+    updatedAt: stored?.updatedAt || null,
+    encryptionAvailable: safeStorage.isEncryptionAvailable()
+  };
+}
+async function exchangeRefreshToken(refreshToken, clientId, tenantId, scope) {
+  const authority = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0`;
+  const refreshParams = new URLSearchParams({
+    client_id: clientId,
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    scope
+  });
+  const refreshResponse = await fetch(`${authority}/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: refreshParams.toString()
+  });
+  if (!refreshResponse.ok) {
+    const errorText = await refreshResponse.text();
+    throw new Error(
+      `Microsoft refresh token exchange failed (${refreshResponse.status}): ${errorText}`
+    );
+  }
+  return await refreshResponse.json();
+}
+const activeTokenRefreshPromises = /* @__PURE__ */ new Map();
+async function getValidMicrosoftAccessToken(accountId) {
+  const tokens = loadMicrosoftTokens();
+  const token = tokens[accountId];
+  if (!token) throw new Error("No Microsoft token stored for this account");
+  if (token.expiresAt > Date.now() + tokenRefreshLeadMs) {
+    return token.accessToken;
+  }
+  if (!token.refreshToken) {
+    throw new Error(
+      "Microsoft refresh token missing. Please reconnect the account."
+    );
+  }
+  const existing = activeTokenRefreshPromises.get(accountId);
+  if (existing) return existing;
+  const refreshPromise = (async () => {
+    try {
+      const { clientId, tenantId, scope } = getMicrosoftOAuthRefreshConfig(token);
+      const refreshed = await exchangeRefreshToken(
+        token.refreshToken,
+        clientId,
+        tenantId,
+        scope
+      );
+      const latestTokens = loadMicrosoftTokens();
+      latestTokens[accountId] = {
+        ...token,
+        accessToken: refreshed.access_token,
+        refreshToken: refreshed.refresh_token || token.refreshToken,
+        expiresAt: Date.now() + refreshed.expires_in * 1e3,
+        scope: refreshed.scope || token.scope,
+        tokenType: refreshed.token_type || token.tokenType,
+        clientId,
+        tenantId,
+        oauthScope: scope
+      };
+      saveMicrosoftTokens(latestTokens);
+      return latestTokens[accountId].accessToken;
+    } finally {
+      activeTokenRefreshPromises.delete(accountId);
+    }
+  })();
+  activeTokenRefreshPromises.set(accountId, refreshPromise);
+  return refreshPromise;
 }
 function getAccountHealthSnapshots() {
   const microsoftTokens = loadMicrosoftTokens();
@@ -64319,10 +64324,11 @@ ipcMain.handle("microsoft-mail:syncFolders", async (_event, payload) => {
   if (folderIds.length === 0) {
     return { success: true };
   }
+  const accessToken = await getValidMicrosoftAccessToken(accountId);
   if (shouldRunInitialFullSync(accountId)) {
-    return await syncMailboxInitialFull(accountId);
+    return await syncMailboxInitialFull(accessToken, accountId);
   }
-  return await syncMailboxTargetedDelta(accountId, folderIds);
+  return await syncMailboxTargetedDelta(accessToken, accountId, folderIds);
 });
 const draftsFilePath = path.join(app.getPath("userData"), "ryze-drafts.enc");
 ipcMain.handle("system:get-drafts", () => {
@@ -65221,11 +65227,12 @@ ipcMain.handle("microsoft-mail:syncInbox", async (_event, payload) => {
   }
   const syncPromise = (async () => {
     try {
+      const accessToken = await getValidMicrosoftAccessToken(accountId);
       if (shouldRunInitialFullSync(accountId)) {
-        return await syncMailboxInitialFull(accountId);
+        return await syncMailboxInitialFull(accessToken, accountId);
       }
       const inboxId = getLocalInboxFolderId(accountId);
-      return await syncMailboxTargetedDelta(accountId, [inboxId]);
+      return await syncMailboxTargetedDelta(accessToken, accountId, [inboxId]);
     } finally {
       activeFullSyncs.delete(accountId);
     }
@@ -65419,10 +65426,11 @@ ipcMain.handle("microsoft-mail:sync", async (_event, payload) => {
   }
   const syncPromise = (async () => {
     try {
+      const accessToken = await getValidMicrosoftAccessToken(accountId);
       if (shouldRunInitialFullSync(accountId)) {
-        return await syncMailboxInitialFull(accountId);
+        return await syncMailboxInitialFull(accessToken, accountId);
       }
-      return await syncMailboxDelta(accountId);
+      return await syncMailboxDelta(accessToken, accountId);
     } finally {
       activeFullSyncs.delete(accountId);
     }
@@ -65432,10 +65440,11 @@ ipcMain.handle("microsoft-mail:sync", async (_event, payload) => {
 });
 ipcMain.handle("microsoft-mail:list", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
+  const accessToken = await getValidMicrosoftAccessToken(accountId);
   if (!accountHasAnyDeltaState(accountId)) {
-    await syncMailboxInitialFull(accountId);
+    await syncMailboxInitialFull(accessToken, accountId);
   } else {
-    await syncMailboxDelta(accountId);
+    await syncMailboxDelta(accessToken, accountId);
   }
   return { messagesByFolder: getLocalMessagesByFolder(accountId) };
 });

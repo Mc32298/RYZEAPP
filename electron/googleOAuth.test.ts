@@ -64,7 +64,7 @@ describe("googleOAuth", () => {
         redirectUri: "http://127.0.0.1:53682",
       }),
     ).toEqual({
-      clientIdSuffix: "uvwxyz.apps.googleusercontent.com",
+      clientIdSuffix: "vwxyz.apps.googleusercontent.com",
       redirectUri: "http://127.0.0.1:53682",
       usesPkce: true,
     });
