@@ -2512,9 +2512,14 @@ ipcMain.handle("imap:sync", async (_event, payload) => {
 // =============================================================================
 
 ipcMain.handle("mail:sync", async (_event, payload) => {
-  const accountId = validateAccountId(payload?.accountId);
-  const provider = getProviderForAccount(accountId);
-  return await provider.sync(accountId);
+  try {
+    const accountId = validateAccountId(payload?.accountId);
+    const provider = getProviderForAccount(accountId);
+    return await provider.sync(accountId);
+  } catch (error) {
+    console.error("mail:sync failed:", error);
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
 });
 
 ipcMain.handle("mail:get-body", async (_event, payload) => {

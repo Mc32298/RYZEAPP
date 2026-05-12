@@ -388,7 +388,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // --- LEGACY / SPECIFIC (To be pruned after UI update) ---
-  getAllLocalEmails: () => ipcRenderer.invoke("microsoft-mail:getAllLocal"),
+  getAllLocalEmails: () => ipcRenderer.invoke("mail:getAllLocal"),
   syncMicrosoftFolders: (accountId: string, folderIds: string[]) =>
     ipcRenderer.invoke("microsoft-mail:syncFolders", {
       accountId: assertString(accountId, "accountId", 256),
