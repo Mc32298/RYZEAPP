@@ -55,6 +55,7 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_emails_account_folder ON emails(accountId, folder);
+  CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(accountId, folder, receivedDateTime DESC);
 
   CREATE TABLE IF NOT EXISTS labels (
   id          TEXT PRIMARY KEY,
@@ -145,3 +146,6 @@ ensureColumn("folders", "icon", "TEXT DEFAULT ''");
 ensureColumn("emails", "isStarred", "INTEGER DEFAULT 0");
 ensureColumn("emails", "attachments", "TEXT DEFAULT '[]'");
 ensureColumn("emails", "snoozedUntil", "TEXT");
+
+// Ensure composite index exists for existing users
+db.exec(`CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(accountId, folder, receivedDateTime DESC);`);
