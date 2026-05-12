@@ -155,16 +155,6 @@ declare global {
         filename: string,
       ) => Promise<{ success: boolean; filePath?: string }>;
       getMicrosoftCalendarEvents: (accountId: string) => Promise<any[]>;
-
-      // --- OLD / REMOVING ---
-      syncMicrosoftEmails: (accountId: string) => Promise<{ success: boolean }>;
-      syncGmailEmails: (accountId: string) => Promise<{ success: boolean }>;
-      syncImapEmails: (accountId: string) => Promise<{ success: boolean }>;
-      moveGmailEmail: (accountId: string, messageId: string, destination: string) => Promise<{ success: boolean }>;
-      moveMicrosoftEmailToFolder: (payload: any) => Promise<any>;
-      sendGmailEmail: (payload: any) => Promise<any>;
-      replyMicrosoftEmail: (payload: any) => Promise<any>;
-      syncMicrosoftInbox: (accountId: string) => Promise<{ success: boolean }>;
     };
   }
 }

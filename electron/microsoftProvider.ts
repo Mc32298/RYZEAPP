@@ -13,26 +13,26 @@ import * as fs from "fs";
 import * as path from "path";
 import { safeStorage, app } from "electron";
 
-import { buildGraphReplyPayload } from \"./mailReplyPayload\";
+import { buildGraphReplyPayload } from "./mailReplyPayload";
 
 import {
   syncMailboxInitialFull,
   syncMailboxDelta,
-  shouldRunInitialFullSync,
   createGraphMailFolder,
   renameGraphMailFolder,
   deleteGraphMailFolder,
   emptyGraphMailFolder,
-} from \"./graphSync\";
+} from "./graphSync";
 import {
   getKnownFolderName,
   getFolderAndDescendantIds,
-} from \"./dbHelpers\";
+  shouldRunInitialFullSync,
+} from "./dbHelpers";
 
 import {
   parseStoredAttachments,
   shouldUseLocalMessageBody,
-} from \"./mailBodyCache\";
+} from "./mailBodyCache";
 
 const microsoftTokenFilePath = path.join(
   app.getPath("userData"),
@@ -427,11 +427,11 @@ export class MicrosoftProvider implements MailProvider {
 
     if (data.id) {
       db.prepare(
-        \"UPDATE emails SET folder = ?, id = ? WHERE accountId = ? AND id = ?\",
+        "UPDATE emails SET folder = ?, id = ? WHERE accountId = ? AND id = ?",
       ).run(actualDestinationDbId, data.id, accountId, messageId);
     } else {
       db.prepare(
-        \"UPDATE emails SET folder = ? WHERE accountId = ? AND id = ?\",
+        "UPDATE emails SET folder = ? WHERE accountId = ? AND id = ?",
       ).run(actualDestinationDbId, accountId, messageId);
     }
   }
@@ -443,19 +443,19 @@ export class MicrosoftProvider implements MailProvider {
     const response = await fetch(
       `https://graph.microsoft.com/v1.0/me/messages/${encodedMessageId}/reply`,
       {
-        method: \"POST\",
+        method: "POST",
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          \"Content-Type\": \"application/json\",
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify(buildGraphReplyPayload(comment || \"\")),
+        body: JSON.stringify(buildGraphReplyPayload(comment || "")),
       },
     );
 
     if (!response.ok) {
       const errorText = await response.text();
-      logProviderFailure(\"Microsoft reply\", response.status, errorText);
-      throw new Error(userSafeProviderError(\"Microsoft reply\", response.status));
+      logProviderFailure("Microsoft reply", response.status, errorText);
+      throw new Error(userSafeProviderError("Microsoft reply", response.status));
     }
   }
 
@@ -470,9 +470,9 @@ export class MicrosoftProvider implements MailProvider {
 
   async deleteAccount(accountId: string): Promise<void> {
     db.transaction(() => {
-      db.prepare(\"DELETE FROM email_labels WHERE accountId = ?\").run(accountId);
-      db.prepare(\"DELETE FROM emails WHERE accountId = ?\").run(accountId);
-      db.prepare(\"DELETE FROM folders WHERE accountId = ?\").run(accountId);
+      db.prepare("DELETE FROM email_labels WHERE accountId = ?").run(accountId);
+      db.prepare("DELETE FROM emails WHERE accountId = ?").run(accountId);
+      db.prepare("DELETE FROM folders WHERE accountId = ?").run(accountId);
     })();
     this.deleteToken(accountId);
   }
@@ -491,7 +491,7 @@ export class MicrosoftProvider implements MailProvider {
       createdFolder.id,
       accountId,
       createdFolder.displayName || displayName,
-      createdFolder.parentFolderId || \"\",
+      createdFolder.parentFolderId || "",
       getKnownFolderName(createdFolder),
       createdFolder.totalItemCount || 0,
       createdFolder.unreadItemCount || 0,
@@ -521,28 +521,28 @@ export class MicrosoftProvider implements MailProvider {
 
     db.transaction(() => {
       for (const id of folderIdsToDelete) {
-        db.prepare(\"DELETE FROM email_labels WHERE accountId = ? AND messageId IN (SELECT id FROM emails WHERE accountId = ? AND folder = ?)\").run(accountId, accountId, id);
-        db.prepare(\"DELETE FROM emails WHERE accountId = ? AND folder = ?\").run(accountId, id);
-        db.prepare(\"DELETE FROM folders WHERE accountId = ? AND id = ?\").run(accountId, id);
+        db.prepare("DELETE FROM email_labels WHERE accountId = ? AND messageId IN (SELECT id FROM emails WHERE accountId = ? AND folder = ?)").run(accountId, accountId, id);
+        db.prepare("DELETE FROM emails WHERE accountId = ? AND folder = ?").run(accountId, id);
+        db.prepare("DELETE FROM folders WHERE accountId = ? AND id = ?").run(accountId, id);
       }
     })();
   }
 
   async emptyFolder(accountId: string, folderId: string): Promise<void> {
     const folder = db.prepare(`SELECT wellKnownName, displayName FROM folders WHERE accountId = ? AND id = ? LIMIT 1`).get(accountId, folderId) as { wellKnownName?: string, displayName?: string };
-    if (!folder) throw new Error(\"Folder not found\");
+    if (!folder) throw new Error("Folder not found");
 
     const accessToken = await this.refreshToken(accountId);
     const isDeletedItemsFolder =
-      folder.wellKnownName === \"deleteditems\" ||
-      folder.displayName?.toLowerCase() === \"deleted items\" ||
-      folder.displayName?.toLowerCase() === \"trash\";
+      folder.wellKnownName === "deleteditems" ||
+      folder.displayName?.toLowerCase() === "deleted items" ||
+      folder.displayName?.toLowerCase() === "trash";
 
     await emptyGraphMailFolder(accessToken, folderId, isDeletedItemsFolder);
 
     db.transaction(() => {
-      db.prepare(\"DELETE FROM email_labels WHERE accountId = ? AND messageId IN (SELECT id FROM emails WHERE accountId = ? AND folder = ?)\").run(accountId, accountId, folderId);
-      db.prepare(\"DELETE FROM emails WHERE accountId = ? AND folder = ?\").run(accountId, folderId);
+      db.prepare("DELETE FROM email_labels WHERE accountId = ? AND messageId IN (SELECT id FROM emails WHERE accountId = ? AND folder = ?)").run(accountId, accountId, folderId);
+      db.prepare("DELETE FROM emails WHERE accountId = ? AND folder = ?").run(accountId, folderId);
     })();
   }
 
@@ -573,7 +573,7 @@ export class MicrosoftProvider implements MailProvider {
       | undefined;
 
     if (!localEmail) {
-      throw new Error(\"Message not found locally.\");
+      throw new Error("Message not found locally.");
     }
 
     const localAttachments = parseStoredAttachments(localEmail.attachments);
@@ -586,10 +586,10 @@ export class MicrosoftProvider implements MailProvider {
       })
     ) {
       return {
-        content: localEmail.bodyContent || \"\",
-        contentType: localEmail.bodyContentType || \"html\",
+        content: localEmail.bodyContent || "",
+        contentType: localEmail.bodyContentType || "html",
         attachments: localAttachments,
-        source: \"local\",
+        source: "local",
       };
     }
 
@@ -599,22 +599,22 @@ export class MicrosoftProvider implements MailProvider {
       `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(
         messageId,
       )}` +
-      `?$select=${encodeURIComponent(\"id,body,bodyPreview\")}` +
+      `?$select=${encodeURIComponent("id,body,bodyPreview")}` +
       `&$expand=${encodeURIComponent(
-        \"attachments($select=id,name,size,contentType,isInline)\",
+        "attachments($select=id,name,size,contentType,isInline)",
       )}`;
 
     const response = await fetch(graphUrl, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        Prefer: 'outlook.body-content-type=\"html\", IdType=\"ImmutableId\"',
+        Prefer: 'outlook.body-content-type="html", IdType="ImmutableId"',
       },
     });
 
     if (!response.ok) {
       const errorText = await response.text();
 
-      console.error(\"Failed to fetch message body from Microsoft Graph:\", {
+      console.error("Failed to fetch message body from Microsoft Graph:", {
         status: response.status,
         accountId,
         messageId,
@@ -625,12 +625,12 @@ export class MicrosoftProvider implements MailProvider {
         return {
           content: `<p>${escapeHtml(localEmail.bodyPreview).replace(
             /\\n/g,
-            \"<br/>\",
+            "<br/>",
           )}</p>`,
-          contentType: \"html\",
-          source: \"preview-fallback\",
+          contentType: "html",
+          source: "preview-fallback",
           warning:
-            \"Could not fetch the full email body from Microsoft Graph. Showing preview instead.\",
+            "Could not fetch the full email body from Microsoft Graph. Showing preview instead.",
         };
       }
 
@@ -653,22 +653,22 @@ export class MicrosoftProvider implements MailProvider {
         contentType?: string;
         isInline?: boolean;
         contentId?: string;
-        [\"@odata.type\"]?: string;
+        ["@odata.type"]?: string;
       }>;
     };
 
-    const bodyContent = message.body?.content || \"\";
-    const bodyContentType = message.body?.contentType || \"html\";
+    const bodyContent = message.body?.content || "";
+    const bodyContentType = message.body?.contentType || "html";
     const attachments = Array.isArray(message.attachments)
       ? message.attachments
           .filter((attachment) =>
-            String(attachment?.[\"@odata.type\"] || \"\").includes(\"fileAttachment\"),
+            String(attachment?.["@odata.type"] || "").includes("fileAttachment"),
           )
           .map((attachment) => ({
-            id: attachment.id || \"\",
-            name: attachment.name || \"Unknown File\",
+            id: attachment.id || "",
+            name: attachment.name || "Unknown File",
             size: attachment.size || 0,
-            contentType: attachment.contentType || \"application/octet-stream\",
+            contentType: attachment.contentType || "application/octet-stream",
             isInline: Boolean(attachment.isInline),
             contentId: attachment.contentId || undefined,
           }))
@@ -693,8 +693,8 @@ export class MicrosoftProvider implements MailProvider {
       bodyContent,
       bodyContentType,
       JSON.stringify(attachments),
-      message.bodyPreview || \"\",
-      message.bodyPreview || \"\",
+      message.bodyPreview || "",
+      message.bodyPreview || "",
       accountId,
       messageId,
     );
@@ -703,7 +703,7 @@ export class MicrosoftProvider implements MailProvider {
       content: bodyContent,
       contentType: bodyContentType,
       attachments,
-      source: \"graph\",
+      source: "graph",
     };
   }
   }

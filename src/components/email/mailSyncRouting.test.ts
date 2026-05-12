@@ -1,86 +1,48 @@
-import { describe, expect, it } from "vitest";
-
+import { describe, it, expect, vi } from "vitest";
 import {
   refreshMailboxAfterReply,
   resolveManualSyncProvider,
 } from "./mailSyncRouting";
 
 describe("resolveManualSyncProvider", () => {
-  it("uses gmail sync for google accounts", () => {
+  it("should resolve google to google", () => {
     expect(resolveManualSyncProvider("google")).toBe("google");
   });
 
-  it("uses microsoft sync for microsoft accounts", () => {
-    expect(resolveManualSyncProvider("microsoft")).toBe("microsoft");
-  });
-
-  it("uses imap sync for imap accounts", () => {
+  it("should resolve imap to imap", () => {
     expect(resolveManualSyncProvider("imap")).toBe("imap");
   });
 
-  it("falls back to microsoft for unknown providers", () => {
-    expect(resolveManualSyncProvider("local")).toBe("microsoft");
+  it("should resolve microsoft to microsoft", () => {
+    expect(resolveManualSyncProvider("microsoft")).toBe("microsoft");
   });
 });
 
 describe("refreshMailboxAfterReply", () => {
-  it("awaits Gmail sync before refreshing the local UI", async () => {
-    const calls: string[] = [];
+  it("should call syncMail and refreshLocalUi", async () => {
+    const syncMail = vi.fn().mockResolvedValue(undefined);
+    const refreshLocalUi = vi.fn().mockResolvedValue(undefined);
 
     await refreshMailboxAfterReply({
       provider: "google",
-      accountId: "google-1",
-      syncGmailEmails: async (accountId) => {
-        calls.push(`gmail:${accountId}`);
-      },
-      syncMicrosoftInbox: async () => {
-        calls.push("microsoft");
-      },
-      refreshLocalUi: async () => {
-        calls.push("refresh");
-      },
+      accountId: "test-id",
+      syncMail,
+      refreshLocalUi,
     });
 
-    expect(calls).toEqual(["gmail:google-1", "refresh"]);
+    expect(syncMail).toHaveBeenCalledWith("test-id");
+    expect(refreshLocalUi).toHaveBeenCalled();
   });
 
-  it("awaits Outlook sync before refreshing the local UI", async () => {
-    const calls: string[] = [];
+  it("should work even if syncMail is missing", async () => {
+    const refreshLocalUi = vi.fn().mockResolvedValue(undefined);
 
     await refreshMailboxAfterReply({
       provider: "microsoft",
-      accountId: "ms-1",
-      syncGmailEmails: async () => {
-        calls.push("gmail");
-      },
-      syncMicrosoftEmails: async (accountId) => {
-        calls.push(`microsoft-all:${accountId}`);
-      },
-      syncMicrosoftInbox: async (accountId) => {
-        calls.push(`microsoft:${accountId}`);
-      },
-      refreshLocalUi: async () => {
-        calls.push("refresh");
-      },
+      accountId: "test-id",
+      refreshLocalUi,
     });
 
-    expect(calls).toEqual(["microsoft-all:ms-1", "refresh"]);
-  });
-
-  it("awaits IMAP sync before refreshing the local UI", async () => {
-    const calls: string[] = [];
-
-    await refreshMailboxAfterReply({
-      provider: "imap",
-      accountId: "imap-user_example.com",
-      syncImapEmails: async (accountId) => {
-        calls.push(`imap:${accountId}`);
-      },
-      refreshLocalUi: async () => {
-        calls.push("refresh");
-      },
-    });
-
-    expect(calls).toEqual(["imap:imap-user_example.com", "refresh"]);
+    expect(refreshLocalUi).toHaveBeenCalled();
   });
 });

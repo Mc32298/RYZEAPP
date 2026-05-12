@@ -19,13 +19,13 @@ import { buildGmailMoveLabelMutation } from "./gmailMove";
 import {
   gmailUpsertFolders,
   gmailFetchMessagesForLabel,
-} from \"./gmailSync\";
+} from "./gmailSync";
 
 import {
   GMAIL_SYSTEM_FOLDERS,
   gmailUpsertMessage,
   gmailExtractBody,
-} from \"./gmailSync\";
+} from "./gmailSync";
 
 const googleTokenFilePath = path.join(
   app.getPath("userData"),
@@ -401,34 +401,34 @@ export class GmailProvider implements MailProvider {
       }
     );
 
-    if (!response.ok) throw new Error(\"Failed to fetch message for reply context\");
+    if (!response.ok) throw new Error("Failed to fetch message for reply context");
     const message = await response.json() as GmailMessage;
 
     const headers = message.payload?.headers || [];
-    const subject = headers.find(h => h.name.toLowerCase() === \"subject\")?.value || \"\";
-    const replySubject = subject.toLowerCase().startsWith(\"re:\") ? subject : `Re: ${subject}`;
-    const messageIdHeader = headers.find(h => h.name.toLowerCase() === \"message-id\")?.value || \"\";
-    const references = headers.find(h => h.name.toLowerCase() === \"references\")?.value || \"\";
-    const from = headers.find(h => h.name.toLowerCase() === \"from\")?.value || \"\";
+    const subject = headers.find(h => h.name.toLowerCase() === "subject")?.value || "";
+    const replySubject = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
+    const messageIdHeader = headers.find(h => h.name.toLowerCase() === "message-id")?.value || "";
+    const references = headers.find(h => h.name.toLowerCase() === "references")?.value || "";
+    const from = headers.find(h => h.name.toLowerCase() === "from")?.value || "";
 
     const emailLines: string[] = [
       `To: ${from}`,
       `Subject: ${replySubject}`,
       `In-Reply-To: ${messageIdHeader}`,
-      `References: ${references ? `${references} ` : \"\"}${messageIdHeader}`,
-      \"MIME-Version: 1.0\",
-      \"Content-Type: text/html; charset=utf-8\",
-      \"\",
-      sanitizeOutgoingHtml(comment || \" \"),
+      `References: ${references ? `${references} ` : ""}${messageIdHeader}`,
+      "MIME-Version: 1.0",
+      "Content-Type: text/html; charset=utf-8",
+      "",
+      sanitizeOutgoingHtml(comment || " "),
     ];
 
-    const raw = Buffer.from(emailLines.join(\"\\r\\n\")).toString(\"base64url\");
+    const raw = Buffer.from(emailLines.join("\\r\\n")).toString("base64url");
 
-    const sendResponse = await fetch(\"https://gmail.googleapis.com/gmail/v1/users/me/messages/send\", {
-      method: \"POST\",
+    const sendResponse = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+      method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        \"Content-Type\": \"application/json\",
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         threadId: message.threadId,
@@ -446,7 +446,7 @@ export class GmailProvider implements MailProvider {
     const accessToken = await this.refreshToken(accountId);
     await gmailUpsertFolders(accessToken, accountId);
     
-    const labels = [\"INBOX\", \"SENT\", \"DRAFT\", \"SPAM\", \"TRASH\", \"IMPORTANT\", \"STARRED\"];
+    const labels = ["INBOX", "SENT", "DRAFT", "SPAM", "TRASH", "IMPORTANT", "STARRED"];
     for (const label of labels) {
       await gmailFetchMessagesForLabel(accessToken, accountId, label);
     }
@@ -456,27 +456,27 @@ export class GmailProvider implements MailProvider {
 
   async deleteAccount(accountId: string): Promise<void> {
     db.transaction(() => {
-      db.prepare(\"DELETE FROM email_labels WHERE accountId = ?\").run(accountId);
-      db.prepare(\"DELETE FROM emails WHERE accountId = ?\").run(accountId);
-      db.prepare(\"DELETE FROM folders WHERE accountId = ?\").run(accountId);
+      db.prepare("DELETE FROM email_labels WHERE accountId = ?").run(accountId);
+      db.prepare("DELETE FROM emails WHERE accountId = ?").run(accountId);
+      db.prepare("DELETE FROM folders WHERE accountId = ?").run(accountId);
     })();
     this.deleteToken(accountId);
   }
 
   async createFolder(_accountId: string, _displayName: string): Promise<any> {
-    throw new Error(\"Label creation not yet implemented for Gmail provider\");
+    throw new Error("Label creation not yet implemented for Gmail provider");
   }
 
   async renameFolder(_accountId: string, _folderId: string, _displayName: string): Promise<any> {
-    throw new Error(\"Label renaming not yet implemented for Gmail provider\");
+    throw new Error("Label renaming not yet implemented for Gmail provider");
   }
 
   async deleteFolder(_accountId: string, _folderId: string): Promise<void> {
-    throw new Error(\"Label deletion not yet implemented for Gmail provider\");
+    throw new Error("Label deletion not yet implemented for Gmail provider");
   }
 
   async emptyFolder(_accountId: string, _folderId: string): Promise<void> {
-    throw new Error(\"Emptying labels not yet implemented for Gmail provider\");
+    throw new Error("Emptying labels not yet implemented for Gmail provider");
   }
 
   async setFolderIcon(accountId: string, folderId: string, icon: string): Promise<any> {
@@ -500,11 +500,11 @@ export class GmailProvider implements MailProvider {
     const msg = (await response.json()) as GmailMessage;
     const folderId = (msg.labelIds ?? []).find((l) =>
       GMAIL_SYSTEM_FOLDERS.some((f) => f.id === l),
-    ) ?? \"INBOX\";
+    ) ?? "INBOX";
 
     gmailUpsertMessage(accountId, folderId, msg);
 
     const body = gmailExtractBody(msg.payload as GmailMessagePart | undefined);
-    return { content: body.content, contentType: body.contentType, source: \"gmail\" };
+    return { content: body.content, contentType: body.contentType, source: "gmail" };
   }
 }

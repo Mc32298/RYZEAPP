@@ -2181,13 +2181,13 @@ export function EmailClient() {
       };
 
       if (provider === "google") {
-        if (!window.electronAPI?.sendGmailEmail) {
+        if (!window.electronAPI?.sendEmail) {
           throw new Error(
-            "Send Gmail API is not available. Fully restart Electron.",
+            "Send email API is not available. Fully restart Electron.",
           );
         }
 
-        await window.electronAPI.sendGmailEmail({
+        await window.electronAPI.sendEmail({
           accountId,
           to: recipients,
           cc: "",
@@ -2195,20 +2195,20 @@ export function EmailClient() {
           body: optimisticReply.body,
         });
       } else {
-        if (!window.electronAPI?.replyMicrosoftEmail) {
+        if (!window.electronAPI?.replyEmail) {
           throw new Error(
             "Send email API is not available. Fully restart Electron.",
           );
         }
 
-        await window.electronAPI.replyMicrosoftEmail({
+        await window.electronAPI.replyEmail(
           accountId,
-          messageId: message.messageId,
-          comment: buildInlineReplyComment({
+          message.messageId,
+          buildInlineReplyComment({
             bodyText,
             signature: settings.signature,
           }),
-        });
+        );
       }
 
       setEmails((prev) => [optimisticReply, ...prev]);
@@ -2216,10 +2216,7 @@ export function EmailClient() {
       await refreshMailboxAfterReply({
         provider: resolveManualSyncProvider(provider),
         accountId,
-        syncGmailEmails: window.electronAPI?.syncGmailEmails,
-        syncImapEmails: window.electronAPI?.syncImapEmails,
-        syncMicrosoftEmails: window.electronAPI?.syncMicrosoftEmails,
-        syncMicrosoftInbox: window.electronAPI?.syncMicrosoftInbox,
+        syncMail: window.electronAPI?.syncMail,
         refreshLocalUi: fetchLocalAndSetUI,
       });
     },

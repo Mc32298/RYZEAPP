@@ -7,32 +7,17 @@ export function resolveManualSyncProvider(provider: Account["provider"]) {
 }
 
 export async function refreshMailboxAfterReply({
-  provider,
   accountId,
-  syncGmailEmails,
-  syncImapEmails,
-  syncMicrosoftEmails,
-  syncMicrosoftInbox,
+  syncMail,
   refreshLocalUi,
 }: {
   provider: ReturnType<typeof resolveManualSyncProvider>;
   accountId: string;
-  syncGmailEmails?: (accountId: string) => Promise<unknown>;
-  syncImapEmails?: (accountId: string) => Promise<unknown>;
-  syncMicrosoftEmails?: (accountId: string) => Promise<unknown>;
-  syncMicrosoftInbox?: (accountId: string) => Promise<unknown>;
+  syncMail?: (accountId: string) => Promise<unknown>;
   refreshLocalUi: () => Promise<unknown>;
 }) {
-  if (provider === "google") {
-    await syncGmailEmails?.(accountId);
-  } else if (provider === "imap") {
-    await syncImapEmails?.(accountId);
-  } else {
-    if (syncMicrosoftEmails) {
-      await syncMicrosoftEmails(accountId);
-    } else {
-      await syncMicrosoftInbox?.(accountId);
-    }
+  if (syncMail) {
+    await syncMail(accountId);
   }
 
   await refreshLocalUi();
