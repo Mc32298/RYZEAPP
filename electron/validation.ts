@@ -251,11 +251,22 @@ export function extractJsonObject(value: string) {
   const start = candidate.indexOf("{");
   const end = candidate.lastIndexOf("}");
 
-  if (start === -1 || end === -1 || end <= start) {
+  if (start === -1) {
     return null;
+  }
+  
+  if (end === -1 || end <= start) {
+    return candidate.slice(start);
   }
 
   return candidate.slice(start, end + 1);
+}
+
+function stripMarkdownAndJsonFraming(text: string): string {
+  let cleaned = text.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+  cleaned = cleaned.replace(/^{\s*"[^"]+"\s*:\s*"/, "");
+  cleaned = cleaned.replace(/"\s*}\s*$/, "");
+  return cleaned.trim();
 }
 
 export function normalizeAiSummaryResult(rawText: string) {
@@ -299,7 +310,7 @@ export function normalizeAiSummaryResult(rawText: string) {
   }
 
   return {
-    summary: rawText.trim(),
+    summary: stripMarkdownAndJsonFraming(rawText),
     keyPoints: [] as string[],
     suggestedActions: [] as string[],
   };
@@ -331,11 +342,14 @@ export function normalizeAiReplyResult(rawText: string) {
       const reply = typeof parsed.reply === "string" ? parsed.reply.trim() : "";
       if (reply) return reply;
     } catch {
-      // Fall back to plain text extraction.
+      const replyMatch = jsonText.match(/"reply"\s*:\s*"([\s\S]*?)"\s*}/i) || jsonText.match(/"reply"\s*:\s*"([\s\S]*)/i);
+      if (replyMatch && replyMatch[1]) {
+        return replyMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/"\s*}\s*$/, "").trim();
+      }
     }
   }
 
-  return rawText.trim();
+  return stripMarkdownAndJsonFraming(rawText);
 }
 
 export function sanitizeBackendSettings(settings: unknown) {
