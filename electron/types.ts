@@ -186,3 +186,12 @@ export type GraphFolderKey =
   | "drafts"
   | "archive"
   | "deleteditems";
+
+export interface MailProvider {
+  sendEmail(accountId: string, payload: any): Promise<any>;
+  markAsRead(accountId: string, messageId: string): Promise<void>;
+  markAsUnread(accountId: string, messageId: string): Promise<void>;
+  toggleStar(accountId: string, messageId: string, isStarred: boolean): Promise<void>;
+  moveMessage(accountId: string, messageId: string, destination: string): Promise<void>;
+  refreshToken(accountId: string): Promise<string>;
+}
