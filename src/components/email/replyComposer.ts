@@ -1,17 +1,5 @@
-import type { EmailThread } from "@/types/email";
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function plainTextToHtml(value: string) {
-  return escapeHtml(value).replace(/\r?\n/g, "<br/>");
-}
+import { EmailThread } from "@/types/email";
+import { escapeHtml, plainTextToHtml } from "@/lib/utils";
 
 function normalizeEmail(value: string) {
   return value.trim().toLowerCase();

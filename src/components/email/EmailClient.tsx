@@ -53,7 +53,7 @@ import {
   Tags,
   UserRound,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, escapeHtml, htmlToPlainText, plainTextToHtml } from "@/lib/utils";
 import {
   CommandDialog,
   CommandEmpty,
@@ -246,29 +246,6 @@ function selectProfileColor(seed: string) {
   return PROFILE_COLORS[hash % PROFILE_COLORS.length];
 }
 
-function htmlToPlainText(html: string) {
-  if (!html.trim()) return "";
-
-  if (typeof window === "undefined") {
-    return html;
-  }
-
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, "text/html");
-
-  doc
-    .querySelectorAll("script, style, iframe, object, embed")
-    .forEach((element) => {
-      element.remove();
-    });
-
-  return (doc.body.textContent || "")
-    .replace(/\u00a0/g, " ")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
 function formatQuotedReply(email: EmailThread) {
   const originalText = htmlToPlainText(email.body || email.preview || "");
 
@@ -291,10 +268,6 @@ function formatQuotedReply(email: EmailThread) {
     `On ${sentAt}, ${email.sender.name} <${email.sender.email}> wrote:`,
     quotedText || "> No readable message content.",
   ].join("\n");
-}
-
-function plainTextToHtml(value: string) {
-  return escapeHtml(value).replace(/\r?\n/g, "<br/>");
 }
 
 function buildReplyHtml(email: EmailThread, signature: string) {
@@ -324,15 +297,6 @@ function buildReplyHtml(email: EmailThread, signature: string) {
       ${originalBody}
     </div>
   `.trim();
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function toneHintFor(tone: AiTone) {
