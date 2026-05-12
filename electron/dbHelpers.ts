@@ -533,37 +533,27 @@ export function getLocalFolders(accountId: string) {
  * Emails within each folder are sorted newest-first.
  */
 export function getLocalMessagesByFolder(accountId: string) {
-  const folders = getLocalFolders(accountId);
-  const messagesByFolder = {} as Record<string, GraphMessage[]>;
-
-  for (const folder of folders as Array<{ id: string }>) {
-    // Specify exact columns to EXCLUDE bodyContent and bodyContentType
-    const rows = db
-      .prepare(
-        `
+  const emailRows = db
+    .prepare(
+      `
     SELECT
-      id,
-      accountId,
-      folder,
-      subject,
-      bodyPreview,
-      receivedDateTime,
-      isRead,
-      hasAttachments,
-      isStarred,
-      fromName,
-      fromAddress,
-      toRecipients,
-      ccRecipients,
-      snoozedUntil
+      id, accountId, folder, subject, bodyPreview,
+      receivedDateTime, isRead, hasAttachments, isStarred,
+      fromName, fromAddress, toRecipients, ccRecipients, snoozedUntil
     FROM emails
-    WHERE accountId = ? AND folder = ?
+    WHERE accountId = ?
     ORDER BY receivedDateTime DESC
   `,
-      )
-      .all(accountId, folder.id) as any[];
+    )
+    .all(accountId) as any[];
 
-    messagesByFolder[folder.id] = rowsToMessages(rows);
+  const messagesByFolder = {} as Record<string, GraphMessage[]>;
+  for (const row of emailRows) {
+    if (!messagesByFolder[row.folder]) {
+      messagesByFolder[row.folder] = [];
+    }
+    // Note: rowsToMessages takes an array and returns an array.
+    messagesByFolder[row.folder].push(rowsToMessages([row])[0]);
   }
 
   return messagesByFolder;
