@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Clock3, RefreshCw, Reply, Sparkles } from "lucide-react";
+import { Loader2, Clock3, RefreshCw, Reply, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import type { EmailThread } from "@/types/email";
 import type {
@@ -16,6 +16,7 @@ interface ReadingInsightsRailProps {
   aiSuggestedActions: string[];
   aiError: string;
   isAiSummarizing: boolean;
+  isAiDrafting: boolean;
   insights: ReadingInsightModel;
   contactContext: ContactContextModel | null;
   onSummarize: () => void;
@@ -53,6 +54,7 @@ export function ReadingInsightsRail({
   aiSuggestedActions,
   aiError,
   isAiSummarizing,
+  isAiDrafting,
   insights,
   contactContext,
   onSummarize,
@@ -199,9 +201,11 @@ export function ReadingInsightsRail({
                     <button
                       key={tone}
                       type="button"
+                      disabled={isAiDrafting}
                       onClick={() => onToneSelect(tone)}
-                      className="rounded-[5px] border border-[var(--border-subtle)] px-2 py-1.5 text-[10.5px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
+                      className="flex items-center justify-center gap-1 rounded-[5px] border border-[var(--border-subtle)] px-2 py-1.5 text-[10.5px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
+                      {isAiDrafting ? <Loader2 size={10} className="animate-spin" /> : null}
                       {toneLabels[tone]}
                     </button>
                   ))}

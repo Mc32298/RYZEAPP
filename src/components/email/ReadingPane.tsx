@@ -79,6 +79,7 @@ interface ReadingPaneProps {
   ) => void;
   isDarkMode: boolean;
   aiSummaryRequestToken?: number;
+  isAiDrafting: boolean;
 }
 
 const SAFE_URL_PROTOCOLS = new Set([
@@ -382,6 +383,7 @@ export function ReadingPane({
   onSnooze,
   isDarkMode,
   aiSummaryRequestToken = 0,
+  isAiDrafting,
 }: ReadingPaneProps) {
   const [loadRemoteImagesForThisEmail, setLoadRemoteImagesForThisEmail] =
     useState(false);
@@ -1125,6 +1127,7 @@ export function ReadingPane({
               aiSuggestedActions={aiSuggestedActions}
               aiError={aiError}
               isAiSummarizing={isAiSummarizing}
+              isAiDrafting={isAiDrafting}
               insights={derivedInsights}
               contactContext={contactContext}
               onSummarize={handleAiSummarize}

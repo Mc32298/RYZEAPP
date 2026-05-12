@@ -437,6 +437,7 @@ export function EmailClient() {
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [aiSummaryRequestToken, setAiSummaryRequestToken] = useState(0);
+  const [isAiDrafting, setIsAiDrafting] = useState(false);
   const [globalSearchDraft, setGlobalSearchDraft] = useState("");
   const [globalSearchSelectedIndex, setGlobalSearchSelectedIndex] =
     useState(0);
@@ -1916,6 +1917,8 @@ export function EmailClient() {
         return;
       }
 
+      setIsAiDrafting(true);
+
       try {
         const result = await window.electronAPI.generateReplyWithAi({
           subject: selectedEmail.subject,
@@ -1938,6 +1941,8 @@ export function EmailClient() {
             : "Could not generate AI reply. Opened a standard reply draft.",
         );
         openReplyDraft("reply", tone, selectedEmail);
+      } finally {
+        setIsAiDrafting(false);
       }
     },
     [openReplyDraft, selectedEmail],
@@ -3091,6 +3096,7 @@ export function EmailClient() {
             onToggleLabel={handleToggleEmailLabel}
             isDarkMode={isAppDarkMode}
             aiSummaryRequestToken={aiSummaryRequestToken}
+            isAiDrafting={isAiDrafting}
           />
         </motion.div>
       </div>
