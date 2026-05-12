@@ -492,7 +492,7 @@ export function rowsToMessages(rows: any[]): GraphMessage[] {
     body: row.bodyContentType
       ? {
           contentType: row.bodyContentType as "text" | "html",
-          content: row.bodyContent,
+          content: row.bodyContent || "",
         }
       : undefined,
     receivedDateTime: row.receivedDateTime,
