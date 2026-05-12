@@ -193,5 +193,14 @@ export interface MailProvider {
   markAsUnread(accountId: string, messageId: string): Promise<void>;
   toggleStar(accountId: string, messageId: string, isStarred: boolean): Promise<void>;
   moveMessage(accountId: string, messageId: string, destination: string): Promise<void>;
+  replyEmail(accountId: string, messageId: string, comment: string): Promise<void>;
+  sync(accountId: string): Promise<{ success: boolean }>;
+  deleteAccount(accountId: string): Promise<void>;
+  createFolder(accountId: string, displayName: string): Promise<any>;
+  renameFolder(accountId: string, folderId: string, displayName: string): Promise<any>;
+  deleteFolder(accountId: string, folderId: string): Promise<void>;
+  emptyFolder(accountId: string, folderId: string): Promise<void>;
+  setFolderIcon(accountId: string, folderId: string, icon: string): Promise<any>;
+  getBody(accountId: string, messageId: string): Promise<{ content: string; contentType: string; attachments?: any[]; source?: string; warning?: string }>;
   refreshToken(accountId: string): Promise<string>;
 }

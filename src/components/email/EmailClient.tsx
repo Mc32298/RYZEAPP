@@ -749,20 +749,14 @@ export function EmailClient() {
         const msAccounts = accounts.filter((a) => a.provider === "microsoft");
         const googleAccounts = accounts.filter((a) => a.provider === "google");
         const imapAccounts = accounts.filter((a) => a.provider === "imap");
-        const msAccountsToSync = msAccounts.filter(
-          (a) => !initialSyncedAccountIds.includes(a.id),
-        );
-        const googleAccountsToSync = googleAccounts.filter(
-          (a) => !initialSyncedAccountIds.includes(a.id),
-        );
-        const imapAccountsToSync = imapAccounts.filter(
+        const accountsToSync = accounts.filter(
           (a) => !initialSyncedAccountIds.includes(a.id),
         );
 
-        if (window.electronAPI?.syncMicrosoftEmails && msAccountsToSync.length > 0) {
-          for (const account of msAccountsToSync) {
+        if (window.electronAPI?.syncMail && accountsToSync.length > 0) {
+          for (const account of accountsToSync) {
             try {
-              await window.electronAPI.syncMicrosoftEmails(account.id);
+              await window.electronAPI.syncMail(account.id);
               if (isCancelled) return;
             } catch (error) {
               console.error(`Initial sync failed for ${account.email}`, error);
@@ -770,36 +764,9 @@ export function EmailClient() {
           }
         }
 
-        if (window.electronAPI?.syncGmailEmails && googleAccountsToSync.length > 0) {
-          for (const account of googleAccountsToSync) {
-            try {
-              await window.electronAPI.syncGmailEmails(account.id);
-              if (isCancelled) return;
-            } catch (error) {
-              console.error(`Initial Gmail sync failed for ${account.email}`, error);
-            }
-          }
-        }
-
-        if (window.electronAPI?.syncImapEmails && imapAccountsToSync.length > 0) {
-          for (const account of imapAccountsToSync) {
-            try {
-              await window.electronAPI.syncImapEmails(account.id);
-              if (isCancelled) return;
-            } catch (error) {
-              console.error(`Initial IMAP sync failed for ${account.email}`, error);
-            }
-          }
-        }
-
-        const allSyncedAccounts = [
-          ...msAccountsToSync,
-          ...googleAccountsToSync,
-          ...imapAccountsToSync,
-        ];
-        if (!isCancelled && allSyncedAccounts.length > 0) {
+        if (!isCancelled && accountsToSync.length > 0) {
           setInitialSyncedAccountIds((prev) => {
-            const newIds = allSyncedAccounts
+            const newIds = accountsToSync
               .map((a) => a.id)
               .filter((id) => !prev.includes(id));
             return [...prev, ...newIds];
@@ -1134,28 +1101,12 @@ export function EmailClient() {
       if (!accountToDelete) return;
 
       try {
-        if (accountToDelete.provider === "microsoft") {
-          if (!window.electronAPI?.deleteMicrosoftAccount) {
-            throw new Error(
-              "Delete account is only available in the Electron desktop app.",
-            );
-          }
-          await window.electronAPI.deleteMicrosoftAccount(accountId);
-        } else if (accountToDelete.provider === "google") {
-          if (!window.electronAPI?.deleteGoogleAccount) {
-            throw new Error(
-              "Delete account is only available in the Electron desktop app.",
-            );
-          }
-          await window.electronAPI.deleteGoogleAccount(accountId);
-        } else if (accountToDelete.provider === "imap") {
-          if (!window.electronAPI?.deleteImapAccount) {
-            throw new Error(
-              "Delete account is only available in the Electron desktop app.",
-            );
-          }
-          await window.electronAPI.deleteImapAccount(accountId);
+        if (!window.electronAPI?.deleteAccount) {
+          throw new Error(
+            "Delete account is only available in the Electron desktop app.",
+          );
         }
+        await window.electronAPI.deleteAccount(accountId);
 
         const nextAccounts = accounts.filter(
           (account) => account.id !== accountId,
@@ -1421,16 +1372,11 @@ export function EmailClient() {
       const owningProvider = owningAccount?.provider ?? "microsoft";
 
       if (!email.isRead) {
-        if (owningProvider === "google") {
-          window.electronAPI?.markGmailEmailAsRead?.(owningAccountId, realMessageId)
-            .catch((error) => console.error("Failed to mark Gmail email as read:", error));
-        } else if (window.electronAPI?.markMicrosoftEmailAsRead) {
-          window.electronAPI
-            .markMicrosoftEmailAsRead(owningAccountId, realMessageId)
-            .catch((error) => {
-              console.error("Failed to mark email as read on server:", error);
-            });
-        }
+        window.electronAPI
+          ?.markEmailAsRead?.(owningAccountId, realMessageId)
+          .catch((error) =>
+            console.error("Failed to mark email as read:", error),
+          );
       }
 
       const shouldFetchBodyOrAttachments =
@@ -1440,22 +1386,16 @@ export function EmailClient() {
 
       if (shouldFetchBodyOrAttachments) {
         try {
-          const getBodyFn =
-            owningProvider === "google"
-              ? window.electronAPI?.getGmailEmailBody
-              : window.electronAPI?.getMicrosoftEmailBody;
-
-          const bodyData = (await getBodyFn?.(
+          const bodyData = (await window.electronAPI.getEmailBody(
             owningAccountId,
             realMessageId,
           )) as any;
 
-          // Microsoft returns { body: { content, contentType } }; Gmail returns { content, contentType }
-          const rawContent = bodyData?.body?.content || bodyData?.content || "";
-          const rawContentType = bodyData?.body?.contentType || bodyData?.contentType || "";
+          // Generic response structure: { content, contentType, attachments, source, warning }
+          const rawContent = bodyData?.content || "";
+          const rawContentType = bodyData?.contentType || "html";
           const isHtml = rawContentType.toLowerCase() === "html";
 
-          // CRITICAL SECURITY FIX: Sanitize all incoming email bodies
           const sanitizedContent = DOMPurify.sanitize(
             isHtml
               ? rawContent
@@ -1491,7 +1431,7 @@ export function EmailClient() {
                     attachments: Array.isArray(bodyData?.attachments)
                       ? bodyData.attachments.map((attachment: any) => ({
                           id: String(attachment.id || ""),
-                          filename: String(attachment.name || "Unknown File"),
+                          filename: String(attachment.filename || attachment.name || "Unknown File"),
                           size: Number(attachment.size || 0),
                           contentType: String(
                             attachment.contentType ||
@@ -1532,17 +1472,15 @@ export function EmailClient() {
       const starAccountId = emailToUpdate.accountId || currentAccountId;
       const starAccount = accounts.find((a) => a.id === starAccountId);
 
-      if (starAccount?.provider === "google") {
-        window.electronAPI?.toggleGmailEmailStar?.(
+      window.electronAPI
+        ?.toggleEmailStar?.(
           starAccountId,
           emailToUpdate.messageId,
           newStarredState,
-        ).catch((error) => console.error("Failed to toggle Gmail star:", error));
-      } else if (window.electronAPI?.toggleMicrosoftEmailStar) {
-        window.electronAPI
-          .toggleMicrosoftEmailStar(starAccountId, emailToUpdate.messageId, newStarredState)
-          .catch((error) => console.error("Failed to toggle star on server:", error));
-      }
+        )
+        .catch((error) =>
+          console.error("Failed to toggle star on server:", error),
+        );
     },
     [emails, currentAccountId, accounts],
   );
@@ -1593,18 +1531,14 @@ export function EmailClient() {
       if (selectedEmailId === id) setSelectedEmailId(null);
 
       const unreadAccountId = emailToUpdate.accountId || currentAccountId;
-      const unreadAccount = accounts.find((a) => a.id === unreadAccountId);
-
-      if (unreadAccount?.provider === "google") {
-        window.electronAPI?.markGmailEmailAsUnread?.(unreadAccountId, emailToUpdate.messageId)
-          .catch((error) => console.error("Failed to mark Gmail email as unread:", error));
-      } else if (window.electronAPI?.markMicrosoftEmailAsUnread) {
-        window.electronAPI
-          .markMicrosoftEmailAsUnread(unreadAccountId, emailToUpdate.messageId)
-          .catch((error) => console.error("Failed to mark unread on server:", error));
-      }
+      
+      window.electronAPI
+        ?.markEmailAsUnread?.(unreadAccountId, emailToUpdate.messageId)
+        .catch((error) =>
+          console.error("Failed to mark email as unread:", error),
+        );
     },
-    [selectedEmailId, emails, currentAccountId, accounts],
+    [selectedEmailId, emails, currentAccountId],
   );
 
   const handleMarkRead = useCallback(
@@ -1619,21 +1553,14 @@ export function EmailClient() {
       );
 
       const readAccountId = emailToUpdate.accountId || currentAccountId;
-      const readAccount = accounts.find((a) => a.id === readAccountId);
 
-      if (readAccount?.provider === "google") {
-        window.electronAPI
-          ?.markGmailEmailAsRead?.(readAccountId, emailToUpdate.messageId)
-          .catch((error) =>
-            console.error("Failed to mark Gmail email as read:", error),
-          );
-      } else if (window.electronAPI?.markMicrosoftEmailAsRead) {
-        window.electronAPI
-          .markMicrosoftEmailAsRead(readAccountId, emailToUpdate.messageId)
-          .catch((error) => console.error("Failed to mark read on server:", error));
-      }
+      window.electronAPI
+        ?.markEmailAsRead?.(readAccountId, emailToUpdate.messageId)
+        .catch((error) =>
+          console.error("Failed to mark email as read:", error),
+        );
     },
-    [emails, currentAccountId, accounts],
+    [emails, currentAccountId],
   );
 
   const handleSnooze = useCallback(
@@ -1666,44 +1593,9 @@ export function EmailClient() {
       const provider =
         accounts.find((account) => account.id === accountId)?.provider ??
         currentAccount.provider;
-      const moveOperation = resolveMailMoveOperation({
-        provider,
-        destinationFolderId,
-      });
-      const result =
-        moveOperation.provider === "google"
-          ? await (() => {
-              if (!window.electronAPI?.moveGmailEmail) {
-                throw new Error(
-                  "Move Gmail API is not available. Fully restart Electron.",
-                );
-              }
-
-              return window.electronAPI
-                .moveGmailEmail(
-                  accountId,
-                  email.messageId,
-                  moveOperation.destination,
-                )
-                .then(() => ({
-                  success: true,
-                  messageId: email.messageId,
-                  destinationFolderId: moveOperation.destination,
-                }));
-            })()
-          : await (() => {
-              if (!window.electronAPI?.moveMicrosoftEmailToFolder) {
-                throw new Error(
-                  "Move email API is not available. Fully restart Electron.",
-                );
-              }
-
-              return window.electronAPI.moveMicrosoftEmailToFolder({
-                accountId,
-                messageId: email.messageId,
-                destinationFolderId,
-              });
-            })();
+      
+      const result = await window.electronAPI
+        .moveEmail(accountId, email.messageId, destinationFolderId);
 
       setEmails((prev) =>
         prev.map((item) =>
@@ -1717,7 +1609,7 @@ export function EmailClient() {
       );
 
       try {
-        if (moveOperation.provider === "microsoft") {
+        if (provider === "microsoft") {
           await window.electronAPI.syncMicrosoftFolders?.(
             accountId,
             getMailboxRefreshFolderIds(sourceFolderId, destinationFolderId),
@@ -1881,36 +1773,11 @@ export function EmailClient() {
       }
 
       try {
-        const result =
-          moveOperation.provider === "google"
-            ? await (() => {
-                if (!window.electronAPI?.moveGmailEmail) {
-                  throw new Error(
-                    "Move Gmail API is not available. Fully restart Electron.",
-                  );
-                }
-
-                return window.electronAPI
-                  .moveGmailEmail(accountId, messageId, moveOperation.destination)
-                  .then(() => ({
-                    success: true,
-                    messageId,
-                    destinationFolderId: moveOperation.destination,
-                  }));
-              })()
-            : await (() => {
-                if (!window.electronAPI?.moveMicrosoftEmailToFolder) {
-                  throw new Error(
-                    "Move email API is not available. Fully restart Electron.",
-                  );
-                }
-
-                return window.electronAPI.moveMicrosoftEmailToFolder({
-                  accountId,
-                  messageId,
-                  destinationFolderId,
-                });
-              })();
+        const result = await window.electronAPI.moveEmail(
+          accountId,
+          messageId,
+          destinationFolderId,
+        );
 
         setEmails((prev) =>
           prev.map((email) =>
@@ -1924,7 +1791,7 @@ export function EmailClient() {
         );
 
         try {
-          if (moveOperation.provider === "microsoft") {
+          if (provider === "microsoft") {
             await window.electronAPI.syncMicrosoftFolders?.(
               accountId,
               getMailboxRefreshFolderIds(sourceFolderId, destinationFolderId),
@@ -2207,26 +2074,21 @@ export function EmailClient() {
         body: draft.body,
       };
 
-      const isGoogleAccount = provider === "google";
-      const sendFn = isGoogleAccount
-        ? window.electronAPI?.sendGmailEmail
-        : window.electronAPI?.sendMicrosoftEmail;
-
-      if (sendFn) {
+      if (window.electronAPI?.sendEmail) {
         try {
           setDrafts((prev) => prev.filter((d) => d.id !== id));
 
           try {
-            await sendFn(sendPayload);
+            await window.electronAPI.sendEmail(sendPayload);
           } catch (error) {
             console.error("Failed to send email:", error);
             setDrafts((prev) => [...prev, draft]);
             alert("Failed to send email. The draft was restored.");
           }
 
-          if (!isGoogleAccount) {
+          if (provider === "microsoft") {
             window.electronAPI?.syncMicrosoftInbox?.(accountId).catch(console.error);
-          } else {
+          } else if (provider === "google") {
             window.electronAPI?.syncGmailEmails?.(accountId).catch(console.error);
           }
         } catch (error) {
@@ -2477,26 +2339,18 @@ export function EmailClient() {
         return false;
       }
 
-      if (!window.electronAPI?.createMicrosoftFolder) {
+      if (!window.electronAPI?.createFolder) {
         window.alert(
           "Create folder API is not available. Fully restart Electron.",
         );
         return false;
       }
 
-      if (
-        currentAccount.provider !== "microsoft" ||
-        !currentAccount.id.startsWith("ms-")
-      ) {
-        window.alert("Connect a Microsoft account before creating folders.");
-        return false;
-      }
-
       try {
-        const createdFolder = await window.electronAPI.createMicrosoftFolder({
-          accountId: currentAccount.id,
-          displayName: trimmedName,
-        });
+        const createdFolder = await window.electronAPI.createFolder(
+          currentAccount.id,
+          trimmedName,
+        );
 
         setMailFolders((prev) => {
           const withoutDuplicate = prev.filter(
@@ -2521,7 +2375,7 @@ export function EmailClient() {
         return false;
       }
     },
-    [currentAccount],
+    [currentAccount.id],
   );
 
   const handleRenameFolder = useCallback(
@@ -2529,7 +2383,7 @@ export function EmailClient() {
       const trimmedName = displayName.trim();
       if (!trimmedName) return false;
 
-      if (!window.electronAPI?.renameMicrosoftFolder) {
+      if (!window.electronAPI?.renameFolder) {
         window.alert(
           "Rename folder API is not available. Fully restart Electron.",
         );
@@ -2537,11 +2391,11 @@ export function EmailClient() {
       }
 
       try {
-        const updatedFolder = await window.electronAPI.renameMicrosoftFolder({
-          accountId: folder.accountId,
-          folderId: folder.id,
-          displayName: trimmedName,
-        });
+        const updatedFolder = await window.electronAPI.renameFolder(
+          folder.accountId,
+          folder.id,
+          trimmedName,
+        );
 
         setMailFolders((prev) =>
           prev.map((item) =>
@@ -2563,7 +2417,7 @@ export function EmailClient() {
 
   const handleDeleteFolder = useCallback(
     async (folder: MailFolder) => {
-      if (!window.electronAPI?.deleteMicrosoftFolder) {
+      if (!window.electronAPI?.deleteFolder) {
         window.alert(
           "Delete folder API is not available. Fully restart Electron.",
         );
@@ -2571,29 +2425,21 @@ export function EmailClient() {
       }
 
       try {
-        const result = await window.electronAPI.deleteMicrosoftFolder({
-          accountId: folder.accountId,
-          folderId: folder.id,
-        });
-
-        const deletedFolderIds = new Set(
-          result.deletedFolderIds || [folder.id],
+        await window.electronAPI.deleteFolder(
+          folder.accountId,
+          folder.id,
         );
 
+        // Assume the backend handles descendant deletion or we just refresh.
+        // For now, simpler local UI update:
         setMailFolders((prev) =>
-          prev.filter((item) => !deletedFolderIds.has(item.id)),
+          prev.filter((item) => item.id !== folder.id),
         );
         setEmails((prev) =>
-          prev.filter((email) => !deletedFolderIds.has(email.folder)),
-        );
-        setSelectedEmailIds((prev) =>
-          prev.filter((id) => {
-            const email = emails.find((item) => item.id === id);
-            return email ? !deletedFolderIds.has(email.folder) : false;
-          }),
+          prev.filter((email) => email.folder !== folder.id),
         );
 
-        if (deletedFolderIds.has(activeFolder)) {
+        if (activeFolder === folder.id) {
           setActiveFolder(findDefaultInboxFolderId(mailFolders));
           setSelectedEmailId(null);
         }
@@ -2607,12 +2453,12 @@ export function EmailClient() {
         return false;
       }
     },
-    [activeFolder, emails, mailFolders],
+    [activeFolder, mailFolders],
   );
 
   const handleEmptyFolder = useCallback(
     async (folder: MailFolder) => {
-      if (!window.electronAPI?.emptyMicrosoftFolder) {
+      if (!window.electronAPI?.emptyFolder) {
         window.alert(
           "Empty folder API is not available. Fully restart Electron.",
         );
@@ -2620,10 +2466,10 @@ export function EmailClient() {
       }
 
       try {
-        await window.electronAPI.emptyMicrosoftFolder({
-          accountId: folder.accountId,
-          folderId: folder.id,
-        });
+        await window.electronAPI.emptyFolder(
+          folder.accountId,
+          folder.id,
+        );
 
         setEmails((prev) => prev.filter((email) => email.folder !== folder.id));
         setSelectedEmailIds([]);
@@ -2645,7 +2491,7 @@ export function EmailClient() {
 
   const handleSetFolderIcon = useCallback(
     async (folder: MailFolder, icon: string) => {
-      if (!window.electronAPI?.setMicrosoftFolderIcon) {
+      if (!window.electronAPI?.setFolderIcon) {
         window.alert(
           "Folder icon API is not available. Fully restart Electron.",
         );
@@ -2653,11 +2499,11 @@ export function EmailClient() {
       }
 
       try {
-        const updatedFolder = await window.electronAPI.setMicrosoftFolderIcon({
-          accountId: currentAccount.id,
-          folderId: folder.id,
+        const updatedFolder = await window.electronAPI.setFolderIcon(
+          folder.accountId,
+          folder.id,
           icon,
-        });
+        );
 
         setMailFolders((prev) =>
           prev.map((item) =>
@@ -2674,7 +2520,7 @@ export function EmailClient() {
         return false;
       }
     },
-    [currentAccount.id],
+    [],
   );
 
   const handleRenameLabel = useCallback(async (label: EmailLabel) => {
@@ -2859,23 +2705,14 @@ export function EmailClient() {
 
   const handleManualRefresh = useCallback(async () => {
     try {
-      const api = window.electronAPI as any;
-      const syncProvider = resolveManualSyncProvider(currentAccount.provider);
-
-      if (syncProvider === "google" && api?.syncGmailEmails) {
-        await api.syncGmailEmails(currentAccount.id);
-      } else if (syncProvider === "imap" && api?.syncImapEmails) {
-        await api.syncImapEmails(currentAccount.id);
-      } else if (api?.syncMicrosoftEmails) {
-        await api.syncMicrosoftEmails(currentAccount.id);
-      } else if (api?.syncMicrosoftInbox) {
-        await api.syncMicrosoftInbox(currentAccount.id);
+      if (window.electronAPI?.syncMail) {
+        await window.electronAPI.syncMail(currentAccount.id);
       }
       await fetchLocalAndSetUI();
     } catch (e) {
       console.error("Manual refresh failed", e);
     }
-  }, [currentAccount.id, currentAccount.provider, fetchLocalAndSetUI]);
+  }, [currentAccount.id, fetchLocalAndSetUI]);
 
   const handleFolderSelect = useCallback((folderId: string) => {
     setActiveFolder(folderId as FolderType);

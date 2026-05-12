@@ -19,69 +19,54 @@ interface GraphMessage {
   };
   receivedDateTime?: string;
   isRead?: boolean;
+  isStarred?: boolean;
   hasAttachments?: boolean;
-  from?: GraphMessageAddress;
-  toRecipients?: GraphMessageAddress[];
-  ccRecipients?: GraphMessageAddress[];
-  snoozedUntil?: string | null;
+  attachments?: any[];
+  fromName?: string;
+  fromAddress?: string;
+  toRecipients?: string;
+  ccRecipients?: string;
+  snoozedUntil?: string;
 }
 
 declare global {
   interface Window {
-    electronAPI?: {
+    electronAPI: {
       minimizeWindow: () => void;
       maximizeWindow: () => void;
       closeWindow: () => void;
+
+      // --- APP INFO ---
+      getAppVersion: () => Promise<string>;
+
+      // --- AUTO UPDATER ---
+      checkUpdates: () => Promise<void>;
+      startUpdateDownload: () => Promise<void>;
+      installUpdate: () => Promise<void>;
+      onUpdateAvailable: (callback: (version: string) => void) => void;
+      onUpdateDownloaded: (callback: () => void) => void;
+      onUpdateError: (callback: (message: string) => void) => void;
+      removeUpdaterListeners: () => void;
+
+      // --- SYSTEM & STORAGE ---
       getDrafts: () => Promise<any[]>;
       saveDrafts: (drafts: any[]) => void;
       onDraftsSaveFailed: (callback: (message: string) => void) => void;
       removeDraftsListeners: () => void;
-      getMicrosoftCalendarEvents: (accountId: string) => Promise<any[]>;
-      getAllLocalEmails: () => Promise<{
-        folders: any[];
-        messagesByFolder: Record<string, any[]>;
-        labels: any[];
-        labelsByMessageId: Record<string, any[]>;
-      }>;
+      getStorageUsage: () => Promise<{ dbSizeGB: number }>;
+      exportEncryptedBackup: () => Promise<{ success: boolean; filePath?: string; canceled?: boolean }>;
+      importEncryptedBackup: () => Promise<{ success: boolean; accountCount?: number; canceled?: boolean; filePath?: string }>;
+      getAccountHealth: () => Promise<any>;
+      updateBackendSettings: (settings: any) => void;
 
-      connectMicrosoftAccount: () => Promise<{
-        account: Pick<
-          Account,
-          "id" | "name" | "email" | "provider" | "externalId"
-        >;
-      }>;
-      getLabels: (accountId: string) => Promise<EmailLabel[]>;
-
-      createLabel: (payload: {
-        accountId: string;
-        name: string;
-        color?: string;
-      }) => Promise<EmailLabel>;
-
-      downloadMicrosoftEmailAttachment: (
-        accountId: string,
-        messageId: string,
-        attachmentId: string,
-        filename: string,
-      ) => Promise<{ success: boolean; canceled?: boolean; filePath?: string }>;
-
-      toggleMicrosoftEmailStar: (
-        accountId: string,
-        messageId: string,
-        isStarred: boolean,
-      ) => Promise<{ success: boolean }>;
-
+      // --- AI FEATURES ---
       summarizeEmailWithAi: (payload: {
         subject: string;
         senderName: string;
         senderEmail: string;
         body: string;
         preview: string;
-      }) => Promise<{
-        summary: string;
-        keyPoints?: string[];
-        suggestedActions?: string[];
-      }>;
+      }) => Promise<{ summary: string; keyPoints?: string[]; suggestedActions?: string[] }>;
       generateReplyWithAi: (payload: {
         subject: string;
         senderName: string;
@@ -89,11 +74,22 @@ declare global {
         body: string;
         preview: string;
         tone?: string;
-      }) => Promise<{
-        reply: string;
+      }) => Promise<{ reply: string }>;
+      getAiProviderKeyStatus: (provider: string) => Promise<{
+        provider: "gemini";
+        configured: boolean;
+        source: "local" | "environment" | null;
+        updatedAt: string | null;
+        encryptionAvailable: boolean;
       }>;
-
-      getAiProviderKeyStatus: (provider: "gemini") => Promise<{
+      setAiProviderKey: (provider: string, apiKey: string) => Promise<{
+        provider: "gemini";
+        configured: boolean;
+        source: "local" | "environment" | null;
+        updatedAt: string | null;
+        encryptionAvailable: boolean;
+      }>;
+      deleteAiProviderKey: (provider: string) => Promise<{
         provider: "gemini";
         configured: boolean;
         source: "local" | "environment" | null;
@@ -101,254 +97,74 @@ declare global {
         encryptionAvailable: boolean;
       }>;
 
-      setAiProviderKey: (
-        provider: "gemini",
-        apiKey: string,
-      ) => Promise<{
-        provider: "gemini";
-        configured: boolean;
-        source: "local" | "environment" | null;
-        updatedAt: string | null;
-        encryptionAvailable: boolean;
-      }>;
-
-      deleteAiProviderKey: (provider: "gemini") => Promise<{
-        provider: "gemini";
-        configured: boolean;
-        source: "local" | "environment" | null;
-        updatedAt: string | null;
-        encryptionAvailable: boolean;
-      }>;
-
-      createMicrosoftFolder: (payload: {
-        accountId: string;
-        displayName: string;
-      }) => Promise<MailFolder>;
-
-      renameMicrosoftFolder: (payload: {
-        accountId: string;
-        folderId: string;
-        displayName: string;
-      }) => Promise<MailFolder>;
-
-      getStorageUsage: () => Promise<{ dbSizeGB: number }>;
-      exportEncryptedBackup: () => Promise<{
-        success: boolean;
-        canceled?: boolean;
-        filePath?: string;
-        createdAt?: string;
-      }>;
-      importEncryptedBackup: () => Promise<{
-        success: boolean;
-        canceled?: boolean;
-        filePath?: string;
-        createdAt?: string;
-      }>;
-      getAccountHealth: () => Promise<
-        Array<{
-          accountId: string;
-          provider: "microsoft" | "google" | "imap";
-          syncStatus: "ok" | "warning" | "idle";
-          tokenStatus: "ok" | "expiring" | "expired" | "n/a";
-          tokenExpiresAt: string | null;
-          lastSyncAt: string | null;
-          folderErrors: number;
-          storageBytes: number;
-        }>
-      >;
-      updateBackendSettings: (settings: any) => void;
-
-      deleteMicrosoftFolder: (payload: {
-        accountId: string;
-        folderId: string;
-      }) => Promise<{
-        success: boolean;
-        deletedFolderIds: string[];
-      }>;
-
-      syncMicrosoftFolders: (
-        accountId: string,
-        folderIds: string[],
-      ) => Promise<{ success: boolean }>;
-
-      emptyMicrosoftFolder: (payload: {
-        accountId: string;
-        folderId: string;
-      }) => Promise<{
-        success: boolean;
-        affectedCount: number;
-      }>;
-
-      setMicrosoftFolderIcon: (payload: {
-        accountId: string;
-        folderId: string;
-        icon: string;
-      }) => Promise<MailFolder>;
-
-      moveMicrosoftEmailToFolder: (payload: {
-        accountId: string;
-        messageId: string;
-        destinationFolderId: string;
-      }) => Promise<{
-        success: boolean;
-        messageId: string;
-        destinationFolderId: string;
-      }>;
-
-      renameLabel: (payload: {
-        accountId: string;
-        labelId: string;
-        name: string;
-      }) => Promise<EmailLabel>;
-
-      deleteLabel: (
-        accountId: string,
-        labelId: string,
-      ) => Promise<{ success: boolean }>;
-
-      assignLabelToEmail: (payload: {
-        accountId: string;
-        messageId: string;
-        labelId: string;
-      }) => Promise<{ success: boolean }>;
-
-      removeLabelFromEmail: (payload: {
-        accountId: string;
-        messageId: string;
-        labelId: string;
-      }) => Promise<{ success: boolean }>;
-
-      deleteMicrosoftAccount: (
-        accountId: string,
-      ) => Promise<{ success: boolean }>;
-
-      markMicrosoftEmailAsUnread: (
-        accountId: string,
-        messageId: string,
-      ) => Promise<{ success: boolean }>;
-
-      markMicrosoftEmailAsRead: (
-        accountId: string,
-        messageId: string,
-      ) => Promise<{ success: boolean }>;
-
-      snoozeEmail: (payload: {
-        accountId: string;
-        messageId: string;
-        snoozedUntil: string;
-      }) => Promise<{ success: boolean }>;
-
-      clearEmailSnooze: (
-        accountId: string,
-        messageId: string,
-      ) => Promise<{ success: boolean }>;
-
-      getMicrosoftEmailsLocal: (accountId: string) => Promise<any>;
-
-      syncMicrosoftEmails: (accountId: string) => Promise<any>;
-      syncMicrosoftInbox: (accountId: string) => Promise<{ success: boolean }>;
-
-      getMicrosoftEmails: (accountId: string) => Promise<{
-        folders?: MailFolder[];
-        messagesByFolder: Record<string, GraphMessage[]>;
-      }>;
-
-      getLocalEmails: (accountId: string) => Promise<{
-        folders: MailFolder[];
-        messagesByFolder: Record<string, GraphMessage[]>;
-        labels: EmailLabel[];
-        labelsByMessageId: Record<string, EmailLabel[]>;
-      }>;
-
-      getMicrosoftEmailBody: (
-        accountId: string,
-        messageId: string,
-      ) => Promise<{ contentType: string; content: string }>;
-
-      moveMicrosoftEmail: (
-        accountId: string,
-        messageId: string,
-        destinationFolder: string,
-      ) => Promise<{ success: boolean }>;
-
-      sendMicrosoftEmail: (payload: {
-        accountId: string;
-        to: string;
-        cc: string;
-        subject: string;
-        body: string;
-      }) => Promise<{ success: boolean }>;
-
-      replyMicrosoftEmail: (payload: {
-        accountId: string;
-        messageId: string;
-        comment: string;
-      }) => Promise<{ success: boolean }>;
-
-      connectGoogleAccount: () => Promise<{
-        account: Pick<
-          Account,
-          "id" | "name" | "email" | "provider" | "externalId"
-        >;
-      }>;
-
-      deleteGoogleAccount: (accountId: string) => Promise<{ success: boolean }>;
-
-      connectImapAccount: (payload: {
-        email: string;
-        displayName: string;
-        host: string;
-        port: number;
-        secure: boolean;
-        username: string;
-        password: string;
-      }) => Promise<{
-        account: Pick<
-          Account,
-          "id" | "name" | "email" | "provider" | "externalId"
-        >;
-      }>;
-
-      deleteImapAccount: (accountId: string) => Promise<{ success: boolean }>;
-
-      syncImapEmails: (accountId: string) => Promise<any>;
-
-      syncGmailEmails: (accountId: string) => Promise<any>;
-
-      getGmailEmailBody: (
-        accountId: string,
-        messageId: string,
-      ) => Promise<{ content: string; contentType: string }>;
-
-      sendGmailEmail: (payload: {
+      // --- GENERIC MAIL OPERATIONS ---
+      syncMail: (accountId: string) => Promise<{ success: boolean }>;
+      getEmailBody: (accountId: string, messageId: string) => Promise<any>;
+      sendEmail: (payload: {
         accountId: string;
         to: string;
         cc?: string;
         subject?: string;
         body?: string;
+      }) => Promise<any>;
+      replyEmail: (accountId: string, messageId: string, comment: string) => Promise<void>;
+      markEmailAsRead: (accountId: string, messageId: string) => Promise<{ success: boolean }>;
+      markEmailAsUnread: (accountId: string, messageId: string) => Promise<{ success: boolean }>;
+      toggleEmailStar: (accountId: string, messageId: string, isStarred: boolean) => Promise<{ success: boolean }>;
+      moveEmail: (accountId: string, messageId: string, destination: string) => Promise<{ success: boolean; messageId: string }>;
+      snoozeEmail: (payload: {
+        accountId: string;
+        messageId: string;
+        snoozedUntil: string;
       }) => Promise<{ success: boolean }>;
+      clearEmailSnooze: (accountId: string, messageId: string) => Promise<{ success: boolean }>;
 
-      markGmailEmailAsRead: (
+      // --- ACCOUNT MANAGEMENT ---
+      connectMicrosoftAccount: () => Promise<{ account: any }>;
+      connectGoogleAccount: () => Promise<{ account: any }>;
+      connectImapAccount: (payload: any) => Promise<{ account: any }>;
+      deleteAccount: (accountId: string) => Promise<{ success: boolean }>;
+
+      // --- FOLDER MANAGEMENT ---
+      createFolder: (accountId: string, displayName: string) => Promise<any>;
+      renameFolder: (accountId: string, folderId: string, displayName: string) => Promise<any>;
+      deleteFolder: (accountId: string, folderId: string) => Promise<{ success: boolean; deletedFolderIds?: string[] }>;
+      emptyFolder: (accountId: string, folderId: string) => Promise<{ success: boolean }>;
+      setFolderIcon: (accountId: string, folderId: string, icon: string) => Promise<any>;
+
+      // --- LABEL MANAGEMENT ---
+      getLabels: (accountId: string) => Promise<EmailLabel[]>;
+      createLabel: (payload: { accountId: string; name: string; color?: string }) => Promise<EmailLabel>;
+      renameLabel: (payload: { accountId: string; labelId: string; name: string }) => Promise<EmailLabel>;
+      deleteLabel: (accountId: string, labelId: string) => Promise<{ success: boolean }>;
+      assignLabelToEmail: (payload: { accountId: string; messageId: string; labelId: string }) => Promise<{ success: boolean }>;
+      removeLabelFromEmail: (payload: { accountId: string; messageId: string; labelId: string }) => Promise<{ success: boolean }>;
+
+      // --- SPECIFIC (To be pruned) ---
+      getAllLocalEmails: () => Promise<{
+        folders: MailFolder[];
+        labels: EmailLabel[];
+        messagesByFolder: Record<string, GraphMessage[]>;
+        labelsByMessageId: Record<string, EmailLabel[]>;
+      }>;
+      syncMicrosoftFolders: (accountId: string, folderIds: string[]) => Promise<void>;
+      downloadMicrosoftEmailAttachment: (
         accountId: string,
         messageId: string,
-      ) => Promise<{ success: boolean }>;
+        attachmentId: string,
+        filename: string,
+      ) => Promise<{ success: boolean; filePath?: string }>;
+      getMicrosoftCalendarEvents: (accountId: string) => Promise<any[]>;
 
-      markGmailEmailAsUnread: (
-        accountId: string,
-        messageId: string,
-      ) => Promise<{ success: boolean }>;
-
-      toggleGmailEmailStar: (
-        accountId: string,
-        messageId: string,
-        isStarred: boolean,
-      ) => Promise<{ success: boolean }>;
-
-      moveGmailEmail: (
-        accountId: string,
-        messageId: string,
-        destination: string,
-      ) => Promise<{ success: boolean }>;
+      // --- OLD / REMOVING ---
+      syncMicrosoftEmails: (accountId: string) => Promise<{ success: boolean }>;
+      syncGmailEmails: (accountId: string) => Promise<{ success: boolean }>;
+      syncImapEmails: (accountId: string) => Promise<{ success: boolean }>;
+      moveGmailEmail: (accountId: string, messageId: string, destination: string) => Promise<{ success: boolean }>;
+      moveMicrosoftEmailToFolder: (payload: any) => Promise<any>;
+      sendGmailEmail: (payload: any) => Promise<any>;
+      replyMicrosoftEmail: (payload: any) => Promise<any>;
+      syncMicrosoftInbox: (accountId: string) => Promise<{ success: boolean }>;
     };
   }
 }

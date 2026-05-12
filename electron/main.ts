@@ -24,6 +24,8 @@ import { buildGraphReplyPayload } from "./mailReplyPayload";
 import { isValidAccountId } from "./accountId";
 import { buildGmailMoveLabelMutation } from "./gmailMove";
 import { deriveSyncHealth, deriveTokenHealth } from "./accountHealth";
+import { MicrosoftProvider } from "./microsoftProvider";
+import { GmailProvider } from "./gmailProvider";
 import {
   buildImapAccountId,
   validateImapConnectionConfig,
@@ -128,6 +130,7 @@ import type {
   GmailMessage,
   GraphMessageAddress,
   GraphMessage,
+  MailProvider,
 } from "./types";
 
 // =============================================================================
@@ -165,12 +168,6 @@ const microsoftTokenFilePath = path.join(
   "microsoft-oauth-tokens.json",
 );
 
-/** Stores encrypted Google OAuth tokens */
-const googleTokenFilePath = path.join(
-  app.getPath("userData"),
-  "google-oauth-tokens.json",
-);
-
 /** Stores encrypted user-provided AI provider keys */
 const aiProviderKeysFilePath = path.join(
   app.getPath("userData"),
@@ -193,6 +190,14 @@ const imapAccountsFilePath = path.join(
 // =============================================================================
 
 const activeFullSyncs = new Map<string, Promise<{ success: boolean }>>();
+const microsoftProvider = new MicrosoftProvider();
+const gmailProvider = new GmailProvider();
+
+function getProviderForAccount(accountId: string): MailProvider {
+  if (accountId.startsWith("ms-")) return microsoftProvider;
+  if (accountId.startsWith("google-")) return gmailProvider;
+  throw new Error(`Unsupported account provider for ID: ${accountId}`);
+}
 
 /** How long the local OAuth server waits for the browser callback (2 minutes) */
 const oauthTimeoutMs = 2 * 60 * 1000;
@@ -500,222 +505,6 @@ function getMicrosoftOAuthRefreshConfig(
       );
     }
 
-    throw error;
-  }
-}
-
-// =============================================================================
-// MICROSOFT TOKEN STORAGE
-// Tokens are encrypted at rest using Electron's safeStorage (OS keychain-backed).
-// =============================================================================
-
-/**
- * Loads all stored Microsoft OAuth tokens from disk, decrypting them with safeStorage.
- * Returns an empty object if no tokens exist or decryption fails.
- */
-function loadMicrosoftTokens() {
-  try {
-    if (!fs.existsSync(microsoftTokenFilePath)) {
-      return {} as Record<string, MicrosoftStoredToken>;
-    }
-
-    const fileContents = fs.readFileSync(microsoftTokenFilePath, "utf8");
-    if (!fileContents) {
-      return {} as Record<string, MicrosoftStoredToken>;
-    }
-
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Secure token storage is not available on this system");
-    }
-
-    const decoded = safeStorage.decryptString(
-      Buffer.from(fileContents, "base64"),
-    );
-    return JSON.parse(decoded) as Record<string, MicrosoftStoredToken>;
-  } catch (error) {
-    console.error("Failed to load stored Microsoft tokens:", error);
-    return {} as Record<string, MicrosoftStoredToken>;
-  }
-}
-
-/**
- * Encrypts and writes all Microsoft OAuth tokens to disk.
- * File is written with mode 0o600 (owner read/write only).
- */
-function saveMicrosoftTokens(tokens: Record<string, MicrosoftStoredToken>) {
-  try {
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Secure token storage is not available on this system");
-    }
-
-    const payload = JSON.stringify(tokens);
-    const content = safeStorage.encryptString(payload).toString("base64");
-
-    fs.writeFileSync(microsoftTokenFilePath, content, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-  } catch (error) {
-    console.error("Failed to save Microsoft tokens:", error);
-    throw error;
-  }
-}
-
-// =============================================================================
-// GOOGLE OAUTH CONFIG
-// Credentials are baked into the bundle at build time from .env via vite.config.ts.
-// =============================================================================
-
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
-const GOOGLE_TOKEN_PROXY_URL = process.env.GOOGLE_OAUTH_TOKEN_PROXY_URL || "";
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
-
-const GOOGLE_REDIRECT_URI =
-  process.env.GOOGLE_OAUTH_REDIRECT_URI || "http://127.0.0.1:53682";
-
-const GOOGLE_SCOPE =
-  "openid email profile " +
-  "https://www.googleapis.com/auth/gmail.readonly " +
-  "https://www.googleapis.com/auth/gmail.modify " +
-  "https://www.googleapis.com/auth/gmail.send";
-
-function getGoogleTokenProxyUrl() {
-  const rawValue = GOOGLE_TOKEN_PROXY_URL.trim();
-  if (!rawValue) {
-    throw new Error(
-      "Missing GOOGLE_OAUTH_TOKEN_PROXY_URL. Configure your Supabase Edge Function endpoint.",
-    );
-  }
-
-  const value = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(rawValue)
-    ? rawValue
-    : `https://${rawValue}`;
-
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error(
-      `GOOGLE_OAUTH_TOKEN_PROXY_URL is not a valid URL: "${rawValue}".`,
-    );
-  }
-
-  const isLocalhost =
-    parsed.hostname === "localhost" ||
-    parsed.hostname === "127.0.0.1" ||
-    parsed.hostname === "::1";
-
-  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLocalhost)) {
-    throw new Error(
-      "GOOGLE_OAUTH_TOKEN_PROXY_URL must be https (or localhost http for development).",
-    );
-  }
-
-  return parsed.toString();
-}
-
-type GoogleTokenProxyRequest =
-  | {
-      grantType: "authorization_code";
-      clientId: string;
-      code: string;
-      codeVerifier: string;
-      redirectUri: string;
-    }
-  | {
-      grantType: "refresh_token";
-      clientId: string;
-      refreshToken: string;
-    };
-
-async function exchangeGoogleTokenViaProxy(request: GoogleTokenProxyRequest) {
-  const proxyUrl = getGoogleTokenProxyUrl();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  const anonKey = SUPABASE_ANON_KEY.trim();
-  if (anonKey) {
-    headers.apikey = anonKey;
-    // Supabase publishable keys (sb_publishable_*) are not JWTs and will fail if
-    // used as Bearer tokens. Only attach Authorization when the key is JWT-shaped.
-    if (anonKey.split(".").length === 3) {
-      headers.Authorization = `Bearer ${anonKey}`;
-    }
-  }
-
-  const response = await fetch(proxyUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(request),
-  });
-
-  const responseText = await response.text();
-
-  if (!response.ok) {
-    const debugContext = buildGoogleTokenExchangeDebugContext({
-      clientId: request.clientId,
-      redirectUri:
-        request.grantType === "authorization_code"
-          ? request.redirectUri
-          : GOOGLE_REDIRECT_URI,
-    });
-    logProviderFailure("Google token exchange", response.status, responseText);
-    if (
-      response.status === 401 &&
-      responseText.includes("UNAUTHORIZED_INVALID_JWT_FORMAT")
-    ) {
-      throw new Error(
-        "Google token proxy authorization failed (Supabase 401). Use a legacy JWT anon key in SUPABASE_ANON_KEY, or deploy the function with JWT verification disabled.",
-      );
-    }
-    throw new Error(
-      formatGoogleTokenExchangeError(response.status, responseText, debugContext),
-    );
-  }
-
-  try {
-    return JSON.parse(responseText) as {
-      access_token: string;
-      refresh_token?: string;
-      expires_in: number;
-      scope?: string;
-      token_type: string;
-    };
-  } catch {
-    throw new Error("Google token proxy returned invalid JSON.");
-  }
-}
-
-// =============================================================================
-// GOOGLE TOKEN STORAGE
-// =============================================================================
-
-function loadGoogleTokens(): Record<string, GoogleStoredToken> {
-  try {
-    if (!fs.existsSync(googleTokenFilePath)) return {};
-    const fileContents = fs.readFileSync(googleTokenFilePath, "utf8");
-    if (!fileContents) return {};
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Secure token storage is not available on this system");
-    }
-    const decoded = safeStorage.decryptString(Buffer.from(fileContents, "base64"));
-    return JSON.parse(decoded) as Record<string, GoogleStoredToken>;
-  } catch (error) {
-    console.error("Failed to load stored Google tokens:", error);
-    return {};
-  }
-}
-
-function saveGoogleTokens(tokens: Record<string, GoogleStoredToken>) {
-  try {
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Secure token storage is not available on this system");
-    }
-    const content = safeStorage.encryptString(JSON.stringify(tokens)).toString("base64");
-    fs.writeFileSync(googleTokenFilePath, content, { encoding: "utf8", mode: 0o600 });
-  } catch (error) {
-    console.error("Failed to save Google tokens:", error);
     throw error;
   }
 }
@@ -1049,106 +838,6 @@ function getAiProviderKeyStatus(provider: AiProvider) {
 }
 
 // =============================================================================
-// MICROSOFT TOKEN REFRESH
-// =============================================================================
-
-/**
- * Exchanges a refresh token for a new access token via the Microsoft token endpoint.
- * Handles optional client secret (public vs confidential client apps).
- */
-async function exchangeRefreshToken(
-  refreshToken: string,
-  clientId: string,
-  tenantId: string,
-  scope: string,
-) {
-  const authority = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0`;
-  const refreshParams = new URLSearchParams({
-    client_id: clientId,
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-    scope,
-  });
-
-  const refreshResponse = await fetch(`${authority}/token`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: refreshParams.toString(),
-  });
-
-  if (!refreshResponse.ok) {
-    const errorText = await refreshResponse.text();
-    throw new Error(
-      `Microsoft refresh token exchange failed (${refreshResponse.status}): ${errorText}`,
-    );
-  }
-
-  return (await refreshResponse.json()) as {
-    access_token: string;
-    refresh_token?: string;
-    expires_in: number;
-    scope: string;
-    token_type: string;
-  };
-}
-
-// Use a Map keyed by accountId instead of a single global promise
-const activeTokenRefreshPromises = new Map<string, Promise<string>>();
-
-async function getValidMicrosoftAccessToken(accountId: string) {
-  const tokens = loadMicrosoftTokens();
-  const token = tokens[accountId];
-
-  if (!token) throw new Error("No Microsoft token stored for this account");
-  if (token.expiresAt > Date.now() + tokenRefreshLeadMs) {
-    return token.accessToken;
-  }
-  if (!token.refreshToken) {
-    throw new Error(
-      "Microsoft refresh token missing. Please reconnect the account.",
-    );
-  }
-
-  // Return existing in-flight refresh for THIS account only
-  const existing = activeTokenRefreshPromises.get(accountId);
-  if (existing) return existing;
-
-  const refreshPromise = (async () => {
-    try {
-      const { clientId, tenantId, scope } =
-        getMicrosoftOAuthRefreshConfig(token);
-      const refreshed = await exchangeRefreshToken(
-        token.refreshToken!,
-        clientId,
-        tenantId,
-        scope,
-      );
-      const latestTokens = loadMicrosoftTokens();
-      latestTokens[accountId] = {
-        ...token,
-        accessToken: refreshed.access_token,
-        refreshToken: refreshed.refresh_token || token.refreshToken,
-        expiresAt: Date.now() + refreshed.expires_in * 1000,
-        scope: refreshed.scope || token.scope,
-        tokenType: refreshed.token_type || token.tokenType,
-        clientId,
-        tenantId,
-        oauthScope: scope,
-      };
-      saveMicrosoftTokens(latestTokens);
-      return latestTokens[accountId].accessToken;
-    } finally {
-      activeTokenRefreshPromises.delete(accountId);
-    }
-  })();
-
-  activeTokenRefreshPromises.set(accountId, refreshPromise);
-  return refreshPromise;
-}
-
-// =============================================================================
 // MICROSOFT GRAPH API — FETCH HELPERS
 // =============================================================================
 
@@ -1161,8 +850,8 @@ async function getValidMicrosoftAccessToken(accountId: string) {
 // LOCAL DATABASE — READ HELPERS
 // =============================================================================
 function getAccountHealthSnapshots(): AccountHealthSnapshot[] {
-  const microsoftTokens = loadMicrosoftTokens();
-  const googleTokens = loadGoogleTokens();
+  const microsoftTokens = microsoftProvider.getTokens();
+  const googleTokens = gmailProvider.getTokens();
   const imapAccounts = loadImapAccounts();
   const accountIds = new Set<string>([
     ...Object.keys(microsoftTokens),
@@ -1753,7 +1442,7 @@ ipcMain.handle("ai:generate-reply", async (_event, payload) => {
 
 ipcMain.handle("microsoft-calendar:get-events", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+  const accessToken = await microsoftProvider.refreshToken(accountId);
 
   // Get events from today to 14 days from now
   const start = new Date();
@@ -1811,7 +1500,7 @@ ipcMain.handle("microsoft-mail:download-attachment", async (event, payload) => {
   }
 
   // 2. ONLY NOW do we fetch the actual file bytes from Microsoft
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+  const accessToken = await microsoftProvider.refreshToken(accountId);
   const encodedMsgId = encodeURIComponent(messageId);
   const encodedAttId = encodeURIComponent(attachmentId);
   const baseAttachmentUrl =
@@ -1863,50 +1552,6 @@ ipcMain.handle("microsoft-mail:download-attachment", async (event, payload) => {
 /** Toggles the starred/flagged status locally and on Microsoft Graph. */
 
 /** Toggles the starred/flagged status locally and on Microsoft Graph. */
-ipcMain.handle("microsoft-mail:toggle-star", async (_event, payload) => {
-  const accountId = validateAccountId(payload?.accountId);
-  const messageId = validateMessageId(payload?.messageId);
-  const isStarred = Boolean(payload?.isStarred);
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
-  const encodedMessageId = encodeURIComponent(messageId);
-
-  const response = await fetch(
-    `https://graph.microsoft.com/v1.0/me/messages/${encodedMessageId}`,
-    {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        flag: {
-          flagStatus: isStarred ? "flagged" : "notFlagged",
-        },
-      }),
-    },
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    // SELF-HEALING: If missing on server, delete local stale copy
-    if (response.status === 404 || errorText.includes("ErrorItemNotFound")) {
-      db.prepare("DELETE FROM emails WHERE accountId = ? AND id = ?").run(
-        accountId,
-        messageId,
-      );
-      return { success: false, missing: true };
-    }
-    logProviderFailure("Toggle star", response.status, errorText);
-    throw new Error(userSafeProviderError("Toggle star", response.status));
-  }
-
-  db.prepare(
-    "UPDATE emails SET isStarred = ? WHERE accountId = ? AND id = ?",
-  ).run(isStarred ? 1 : 0, accountId, messageId);
-
-  return { success: true };
-});
-
 ipcMain.handle("system:get-storage-usage", () => {
   try {
     const stats = fs.statSync(dbPath);
@@ -2071,7 +1716,7 @@ ipcMain.handle("microsoft-mail:syncFolders", async (_event, payload) => {
     return { success: true };
   }
 
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+  const accessToken = await microsoftProvider.refreshToken(accountId);
 
   if (shouldRunInitialFullSync(accountId)) {
     return await syncMailboxInitialFull(accessToken, accountId);
@@ -2155,7 +1800,7 @@ ipcMain.handle("microsoft-folder:create", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
   const displayName = validateFolderName(payload?.displayName);
 
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+  const accessToken = await microsoftProvider.refreshToken(accountId);
   const createdFolder = await createGraphMailFolder(accessToken, displayName);
 
   const normalizedFolder: GraphMailFolder = {
@@ -2229,7 +1874,7 @@ ipcMain.handle("microsoft-folder:rename", async (_event, payload) => {
     throw new Error("System folders cannot be renamed.");
   }
 
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+  const accessToken = await microsoftProvider.refreshToken(accountId);
   const renamedFolder = await renameGraphMailFolder(
     accessToken,
     folderId,
@@ -2280,7 +1925,7 @@ ipcMain.handle("microsoft-folder:delete", async (_event, payload) => {
     throw new Error("System folders cannot be deleted.");
   }
 
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+  const accessToken = await microsoftProvider.refreshToken(accountId);
 
   await deleteGraphMailFolder(accessToken, folderId);
 
@@ -2343,7 +1988,7 @@ ipcMain.handle("microsoft-folder:empty", async (_event, payload) => {
     throw new Error("Folder not found");
   }
 
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+  const accessToken = await microsoftProvider.refreshToken(accountId);
 
   const isDeletedItemsFolder =
     folder.wellKnownName === "deleteditems" ||
@@ -2519,7 +2164,7 @@ ipcMain.on("window-close", (event) => {
  */
 ipcMain.handle("microsoft-oauth:connect", async () => {
   const { clientId, tenantId, redirectUri, scope } =
-    getMicrosoftOAuthEnv();
+    microsoftProvider.getOAuthEnv();
 
   // PKCE: generate a random verifier and its SHA-256 challenge
   const verifier = toBase64Url(crypto.randomBytes(64));
@@ -2673,9 +2318,7 @@ ipcMain.handle("microsoft-oauth:connect", async () => {
   }
 
   // Persist the tokens encrypted on disk
-  const tokens = loadMicrosoftTokens();
-
-  tokens[accountId] = {
+  microsoftProvider.saveToken(accountId, {
     accountId,
     provider: "microsoft",
     accessToken: tokenPayload.access_token,
@@ -2687,9 +2330,7 @@ ipcMain.handle("microsoft-oauth:connect", async () => {
     tenantId,
     redirectUri,
     oauthScope: scope,
-  };
-
-  saveMicrosoftTokens(tokens);
+  });
 
   return {
     account: {
@@ -2716,11 +2357,7 @@ ipcMain.handle("microsoft-account:delete", async (_event, payload) => {
     db.prepare("DELETE FROM folders WHERE accountId = ?").run(accountId);
   })();
 
-  const tokens = loadMicrosoftTokens();
-  if (tokens[accountId]) {
-    delete tokens[accountId];
-    saveMicrosoftTokens(tokens);
-  }
+  microsoftProvider.deleteToken(accountId);
 
   return { success: true };
 });
@@ -2808,7 +2445,7 @@ ipcMain.handle("google-oauth:connect", async () => {
   });
 
   // Exchange auth code for tokens via Supabase Edge Function proxy.
-  const tokenPayload = await exchangeGoogleTokenViaProxy({
+  const tokenPayload = await gmailProvider.exchangeTokenViaProxy({
     grantType: "authorization_code",
     clientId: GOOGLE_CLIENT_ID,
     code: authCode,
@@ -2839,8 +2476,7 @@ ipcMain.handle("google-oauth:connect", async () => {
 
   const accountId = `google-${profile.id}`;
 
-  const tokens = loadGoogleTokens();
-  tokens[accountId] = {
+  gmailProvider.saveToken(accountId, {
     accountId,
     provider: "google",
     accessToken: tokenPayload.access_token,
@@ -2850,8 +2486,7 @@ ipcMain.handle("google-oauth:connect", async () => {
     tokenType: tokenPayload.token_type,
     clientId: GOOGLE_CLIENT_ID,
     oauthScope: GOOGLE_SCOPE,
-  };
-  saveGoogleTokens(tokens);
+  });
 
   // Pre-create Gmail system folders in the DB
   gmailUpsertFolders(accountId);
@@ -2880,11 +2515,7 @@ ipcMain.handle("google-account:delete", async (_event, payload) => {
     db.prepare("DELETE FROM folders WHERE accountId = ?").run(accountId);
   })();
 
-  const tokens = loadGoogleTokens();
-  if (tokens[accountId]) {
-    delete tokens[accountId];
-    saveGoogleTokens(tokens);
-  }
+  gmailProvider.deleteToken(accountId);
 
   return { success: true };
 });
@@ -2954,7 +2585,7 @@ ipcMain.handle("imap:sync", async (_event, payload) => {
 
 ipcMain.handle("gmail:sync", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
-  const accessToken = await getValidGoogleAccessToken(accountId);
+  const accessToken = await gmailProvider.refreshToken(accountId);
 
   gmailUpsertFolders(accountId);
 
@@ -2977,7 +2608,7 @@ ipcMain.handle("gmail:get-body", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
   const messageId = assertString(payload?.messageId, "messageId", 2048);
 
-  const accessToken = await getValidGoogleAccessToken(accountId);
+  const accessToken = await gmailProvider.refreshToken(accountId);
 
   const response = await fetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`,
@@ -3000,153 +2631,52 @@ ipcMain.handle("gmail:get-body", async (_event, payload) => {
   return { content: body.content, contentType: body.contentType };
 });
 
-ipcMain.handle("gmail:send", async (_event, payload) => {
+ipcMain.handle("mail:send", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
-  const to      = assertString(payload?.to, "to", 4096);
-  const cc      = optionalString(payload?.cc, "cc", 4096);
-  const subject = optionalString(payload?.subject, "subject", 512);
-  const body    = optionalString(payload?.body, "body", 500_000);
-
-  const accessToken = await getValidGoogleAccessToken(accountId);
-
-  const tokens = loadGoogleTokens();
-  const token  = tokens[accountId];
-  if (!token) throw new Error("No Google token stored for this account");
-
-  const lines: string[] = [
-    `To: ${to}`,
-    ...(cc ? [`Cc: ${cc}`] : []),
-    `Subject: ${subject || "(No subject)"}`,
-    "MIME-Version: 1.0",
-    "Content-Type: text/html; charset=utf-8",
-    "",
-    sanitizeOutgoingHtml(body || " "),
-  ];
-
-  const raw = Buffer.from(lines.join("\r\n")).toString("base64url");
-
-  const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ raw }),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Gmail send failed (${response.status}): ${err}`);
-  }
-
-  return { success: true };
+  const provider = getProviderForAccount(accountId);
+  return await provider.sendEmail(accountId, payload);
 });
 
-ipcMain.handle("gmail:mark-read", async (_event, payload) => {
+ipcMain.handle("mail:mark-read", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
   const messageId = assertString(payload?.messageId, "messageId", 2048);
-  const accessToken = await getValidGoogleAccessToken(accountId);
-
-  const response = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/modify`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
-    },
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Gmail mark-read failed (${response.status}): ${err}`);
-  }
-
-  db.prepare("UPDATE emails SET isRead = 1 WHERE id = ? AND accountId = ?").run(messageId, accountId);
+  const provider = getProviderForAccount(accountId);
+  await provider.markAsRead(accountId, messageId);
   return { success: true };
 });
 
-ipcMain.handle("gmail:mark-unread", async (_event, payload) => {
+ipcMain.handle("mail:mark-unread", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
   const messageId = assertString(payload?.messageId, "messageId", 2048);
-  const accessToken = await getValidGoogleAccessToken(accountId);
-
-  const response = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/modify`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ addLabelIds: ["UNREAD"] }),
-    },
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Gmail mark-unread failed (${response.status}): ${err}`);
-  }
-
-  db.prepare("UPDATE emails SET isRead = 0 WHERE id = ? AND accountId = ?").run(messageId, accountId);
+  const provider = getProviderForAccount(accountId);
+  await provider.markAsUnread(accountId, messageId);
   return { success: true };
 });
 
-ipcMain.handle("gmail:toggle-star", async (_event, payload) => {
+ipcMain.handle("mail:toggle-star", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
   const messageId = assertString(payload?.messageId, "messageId", 2048);
   const isStarred = Boolean(payload?.isStarred);
-  const accessToken = await getValidGoogleAccessToken(accountId);
-
-  const response = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/modify`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify(
-        isStarred
-          ? { addLabelIds: ["STARRED"] }
-          : { removeLabelIds: ["STARRED"] },
-      ),
-    },
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Gmail toggle-star failed (${response.status}): ${err}`);
-  }
-
-  db.prepare("UPDATE emails SET isStarred = ? WHERE id = ? AND accountId = ?").run(
-    isStarred ? 1 : 0, messageId, accountId,
-  );
+  const provider = getProviderForAccount(accountId);
+  await provider.toggleStar(accountId, messageId, isStarred);
   return { success: true };
 });
 
-ipcMain.handle("gmail:move", async (_event, payload) => {
-  const accountId    = validateAccountId(payload?.accountId);
-  const messageId    = assertString(payload?.messageId, "messageId", 2048);
-  const destination  = assertString(payload?.destination, "destination", 64).toUpperCase();
+ipcMain.handle("mail:move", async (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+  const messageId = assertString(payload?.messageId, "messageId", 2048);
+  const destination = assertString(payload?.destination, "destination", 64);
+  const provider = getProviderForAccount(accountId);
+  await provider.moveMessage(accountId, messageId, destination);
+  return { success: true };
+});
 
-  const validDestinations = new Set(["INBOX", "TRASH", "SPAM", "DRAFT", "ARCHIVE"]);
-  if (!validDestinations.has(destination)) throw new Error("Invalid Gmail destination label");
-
-  const accessToken = await getValidGoogleAccessToken(accountId);
-  const { addLabelIds, removeLabelIds } =
-    buildGmailMoveLabelMutation(destination);
-
-  const response = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/modify`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ addLabelIds, removeLabelIds }),
-    },
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Gmail move failed (${response.status}): ${err}`);
-  }
-
-  db.prepare("UPDATE emails SET folder = ? WHERE id = ? AND accountId = ?").run(
-    destination, messageId, accountId,
-  );
+ipcMain.handle("mail:reply", async (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+  const messageId = assertString(payload?.messageId, "messageId", 2048);
+  const comment = optionalString(payload?.comment, "comment", 500_000);
+  const provider = getProviderForAccount(accountId);
+  await provider.replyEmail(accountId, messageId, comment);
   return { success: true };
 });
 
@@ -3154,53 +2684,12 @@ ipcMain.handle("gmail:move", async (_event, payload) => {
 // IPC HANDLERS — MICROSOFT MAIL
 // =============================================================================
 
-/** Sends an email via the Graph API sendMail endpoint. */
-ipcMain.handle("microsoft-mail:send", async (_event, payload) => {
-  const accountId = validateAccountId(payload?.accountId);
-  const to = assertString(payload?.to, "to", 4096);
-  const cc = optionalString(payload?.cc, "cc", 4096);
-  const subject = optionalString(payload?.subject, "subject", 512);
-  const body = optionalString(payload?.body, "body", 500_000);
-
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
-
-  const messagePayload = {
-    message: {
-      subject: subject || "(No subject)",
-      body: {
-        contentType: "html",
-        content: sanitizeOutgoingHtml(body || " "),
-      },
-      toRecipients: parseRecipients(to),
-      ccRecipients: parseRecipients(cc),
-    },
-    saveToSentItems: true,
-  };
-
-  const response = await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(messagePayload),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    logProviderFailure("Microsoft send mail", response.status, errorText);
-    throw new Error(userSafeProviderError("Microsoft send mail", response.status));
-  }
-
-  return { success: true };
-});
-
 /** Sends a reply through Graph's message reply action. */
 ipcMain.handle("microsoft-mail:reply", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
   const messageId = validateMessageId(payload?.messageId);
   const comment = optionalString(payload?.comment, "comment", 500_000);
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+  const accessToken = await microsoftProvider.refreshToken(accountId);
   const encodedMessageId = encodeURIComponent(messageId);
 
   const response = await fetch(
@@ -3243,7 +2732,7 @@ ipcMain.handle("microsoft-mail:syncInbox", async (_event, payload) => {
 
   const syncPromise = (async () => {
     try {
-      const accessToken = await getValidMicrosoftAccessToken(accountId);
+      const accessToken = await microsoftProvider.refreshToken(accountId);
 
       if (shouldRunInitialFullSync(accountId)) {
         return await syncMailboxInitialFull(accessToken, accountId);
@@ -3312,88 +2801,11 @@ ipcMain.handle("labels:remove-email", (_event, payload) => {
 
   return { success: true };
 });
-/** Marks a single message as read both locally (DB) and remotely (Graph API). */
-ipcMain.handle("microsoft-mail:mark-read", async (_event, payload) => {
-  const accountId = validateAccountId(payload?.accountId);
-  const messageId = validateMessageId(payload?.messageId);
-  const isRead = resolveMarkReadValue(payload?.isRead);
-
-  // Optimistic local update so the UI stays responsive
-  db.prepare(
-    `UPDATE emails SET isRead = ? WHERE id = ? AND accountId = ?`,
-  ).run(isRead ? 1 : 0, messageId, accountId);
-
-  // Sync to Graph API immediately using a fresh (auto-refreshed) token
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
-  const encodedMessageId = encodeURIComponent(messageId);
-
-  const response = await fetch(
-    `https://graph.microsoft.com/v1.0/me/messages/${encodedMessageId}`,
-    {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ isRead }),
-    },
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    // Self-heal: if the message is gone server-side, remove the stale local copy
-    if (response.status === 404 || errorText.includes("ErrorItemNotFound")) {
-      db.prepare("DELETE FROM emails WHERE accountId = ? AND id = ?").run(
-        accountId,
-        messageId,
-      );
-      return { success: false, missing: true };
-    }
-    logProviderFailure("Mark as read", response.status, errorText);
-    throw new Error(userSafeProviderError("Mark as read", response.status));
-  }
-
-  return { success: true };
-});
-
 /** Marks a single message as unread both remotely (Graph API) and locally (DB). */
 ipcMain.handle("microsoft-mail:mark-unread", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
   const messageId = validateMessageId(payload?.messageId);
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
-  const encodedMessageId = encodeURIComponent(messageId);
-
-  const response = await fetch(
-    `https://graph.microsoft.com/v1.0/me/messages/${encodedMessageId}`,
-    {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ isRead: false }),
-    },
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    // SELF-HEALING: If missing on server, delete local stale copy
-    if (response.status === 404 || errorText.includes("ErrorItemNotFound")) {
-      db.prepare("DELETE FROM emails WHERE accountId = ? AND id = ?").run(
-        accountId,
-        messageId,
-      );
-      return { success: false, missing: true };
-    }
-    logProviderFailure("Mark as unread", response.status, errorText);
-    throw new Error(userSafeProviderError("Mark as unread", response.status));
-  }
-
-  db.prepare("UPDATE emails SET isRead = 0 WHERE accountId = ? AND id = ?").run(
-    accountId,
-    messageId,
-  );
-
+  await microsoftProvider.markAsUnread(accountId, messageId);
   return { success: true };
 });
 
@@ -3512,7 +2924,7 @@ ipcMain.handle("microsoft-mail:sync", async (_event, payload) => {
 
   const syncPromise = (async () => {
     try {
-      const accessToken = await getValidMicrosoftAccessToken(accountId);
+      const accessToken = await microsoftProvider.refreshToken(accountId);
 
       if (shouldRunInitialFullSync(accountId)) {
         return await syncMailboxInitialFull(accessToken, accountId);
@@ -3536,7 +2948,7 @@ ipcMain.handle("microsoft-mail:sync", async (_event, payload) => {
 ipcMain.handle("microsoft-mail:list", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
 
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+  const accessToken = await microsoftProvider.refreshToken(accountId);
 
   if (!accountHasAnyDeltaState(accountId)) {
     await syncMailboxInitialFull(accessToken, accountId);
@@ -3620,7 +3032,7 @@ ipcMain.handle("microsoft-mail:get-body", async (_event, payload) => {
     };
   }
 
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+  const accessToken = await microsoftProvider.refreshToken(accountId);
 
   const graphUrl =
     `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(
@@ -3776,7 +3188,7 @@ ipcMain.handle("microsoft-mail:move-to-folder", async (_event, payload) => {
     throw new Error("Email not found");
   }
 
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
+  const accessToken = await microsoftProvider.refreshToken(accountId);
   const movedMessage = await moveGraphMessageToFolder(
     accessToken,
     messageId,
@@ -3835,73 +3247,8 @@ ipcMain.handle("microsoft-mail:move-to-folder", async (_event, payload) => {
 ipcMain.handle("microsoft-mail:move", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
   const messageId = validateMessageId(payload?.messageId);
-  const destinationFolderKey = validateDestinationFolder(
-    payload?.destinationFolder,
-  );
-  const accessToken = await getValidMicrosoftAccessToken(accountId);
-  const encodedMessageId = encodeURIComponent(messageId);
-
-  // Look up the actual Graph Folder ID from the local database
-  const targetFolderRow = db
-    .prepare(
-      `
-    SELECT id FROM folders 
-    WHERE accountId = ? AND wellKnownName = ? 
-    LIMIT 1
-  `,
-    )
-    .get(accountId, destinationFolderKey) as { id?: string } | undefined;
-
-  // Fallback to the key itself if the folder hasn't synced locally yet
-  const actualDestinationDbId = targetFolderRow?.id || destinationFolderKey;
-
-  // Tell Graph API to move it (Graph accepts the well-known string here)
-  const response = await fetch(
-    `https://graph.microsoft.com/v1.0/me/messages/${encodedMessageId}/move`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        destinationId: destinationFolderKey,
-      }),
-    },
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-
-    if (response.status === 404 || errorText.includes("ErrorItemNotFound")) {
-      db.prepare("DELETE FROM emails WHERE accountId = ? AND id = ?").run(
-        accountId,
-        messageId,
-      );
-      return {
-        success: false,
-        alreadyMovedOrMissing: true,
-        message:
-          "Message was not found on the server. Local stale copy was removed.",
-      };
-    }
-    logProviderFailure("Move message", response.status, errorText);
-    throw new Error(userSafeProviderError("Move message", response.status));
-  }
-
-  const data = await response.json();
-
-  // Update the local DB using the actual Graph Folder ID, not the string key
-  if (data.id) {
-    db.prepare(
-      "UPDATE emails SET folder = ?, id = ? WHERE accountId = ? AND id = ?",
-    ).run(actualDestinationDbId, data.id, accountId, messageId);
-  } else {
-    db.prepare(
-      "UPDATE emails SET folder = ? WHERE accountId = ? AND id = ?",
-    ).run(actualDestinationDbId, accountId, messageId);
-  }
-
+  const destination = assertString(payload?.destinationFolder || payload?.destination, "destination", 64);
+  await microsoftProvider.moveMessage(accountId, messageId, destination);
   return { success: true };
 });
 
@@ -3995,7 +3342,7 @@ function getTokensByAccountId(
   accountId: string,
   _authEnv: MicrosoftOAuthEnv,
 ): MicrosoftStoredToken | undefined {
-  const tokens = loadMicrosoftTokens();
+  const tokens = microsoftProvider.getTokens();
   const token = tokens[accountId];
 
   if (

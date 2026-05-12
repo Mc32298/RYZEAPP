@@ -61728,6 +61728,7 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_emails_account_folder ON emails(accountId, folder);
+  CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(accountId, folder, receivedDateTime DESC);
 
   CREATE TABLE IF NOT EXISTS labels (
   id          TEXT PRIMARY KEY,
@@ -61799,6 +61800,7 @@ ensureColumn("folders", "icon", "TEXT DEFAULT ''");
 ensureColumn("emails", "isStarred", "INTEGER DEFAULT 0");
 ensureColumn("emails", "attachments", "TEXT DEFAULT '[]'");
 ensureColumn("emails", "snoozedUntil", "TEXT");
+db.exec(`CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(accountId, folder, receivedDateTime DESC);`);
 function parseStoredAttachments(value) {
   try {
     const parsed = JSON.parse(value || "[]");
@@ -62142,7 +62144,7 @@ function rowsToMessages(rows) {
     bodyPreview: row.bodyPreview,
     body: row.bodyContentType ? {
       contentType: row.bodyContentType,
-      content: row.bodyContent
+      content: row.bodyContent || ""
     } : void 0,
     receivedDateTime: row.receivedDateTime,
     isRead: Boolean(row.isRead),
@@ -62171,34 +62173,23 @@ function getLocalFolders(accountId) {
   ).all(accountId);
 }
 function getLocalMessagesByFolder(accountId) {
-  const folders = getLocalFolders(accountId);
-  const messagesByFolder = {};
-  for (const folder of folders) {
-    const rows = db.prepare(
-      `
+  const emailRows = db.prepare(
+    `
     SELECT
-      id,
-      accountId,
-      folder,
-      subject,
-      bodyPreview,
-      bodyContentType,
-      bodyContent,
-      receivedDateTime,
-      isRead,
-      hasAttachments,
-      isStarred,
-      attachments,
-      fromName,
-      fromAddress,
-      toRecipients,
-      ccRecipients
+      id, accountId, folder, subject, bodyPreview,
+      receivedDateTime, isRead, hasAttachments, isStarred,
+      fromName, fromAddress, toRecipients, ccRecipients, snoozedUntil
     FROM emails
-    WHERE accountId = ? AND folder = ?
+    WHERE accountId = ?
     ORDER BY receivedDateTime DESC
   `
-    ).all(accountId, folder.id);
-    messagesByFolder[folder.id] = rowsToMessages(rows);
+  ).all(accountId);
+  const messagesByFolder = {};
+  for (const row of emailRows) {
+    if (!messagesByFolder[row.folder]) {
+      messagesByFolder[row.folder] = [];
+    }
+    messagesByFolder[row.folder].push(rowsToMessages([row])[0]);
   }
   return messagesByFolder;
 }
@@ -65445,8 +65436,8 @@ ipcMain.handle("microsoft-mail:getAllLocal", () => {
   const emailRows = db.prepare(
     `
     SELECT
-      id, accountId, folder, subject, bodyPreview, bodyContentType, bodyContent,
-      receivedDateTime, isRead, hasAttachments, isStarred, attachments,
+      id, accountId, folder, subject, bodyPreview,
+      receivedDateTime, isRead, hasAttachments, isStarred,
       fromName, fromAddress, toRecipients, ccRecipients, snoozedUntil
     FROM emails
     ORDER BY receivedDateTime DESC
