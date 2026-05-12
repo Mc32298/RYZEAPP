@@ -2713,43 +2713,6 @@ ipcMain.handle("microsoft-mail:reply", async (_event, payload) => {
   return { success: true };
 });
 
-/**
- * ⚠️  DEPRECATED / LEGACY — microsoft-mail:syncInbox
- *
- * This handler only syncs the inbox folder and does NOT sync the folder list.
- * It predates the full syncMailboxToLocalDb implementation.
- *
- * Use 'microsoft-mail:sync' instead, which syncs ALL folders and their messages.
- *
- * Safe to remove once all callers have been migrated to 'microsoft-mail:sync'.
- */
-ipcMain.handle("microsoft-mail:syncInbox", async (_event, payload) => {
-  const accountId = validateAccountId(payload?.accountId);
-
-  if (activeFullSyncs.has(accountId)) {
-    return activeFullSyncs.get(accountId);
-  }
-
-  const syncPromise = (async () => {
-    try {
-      const accessToken = await microsoftProvider.refreshToken(accountId);
-
-      if (shouldRunInitialFullSync(accountId)) {
-        return await syncMailboxInitialFull(accessToken, accountId);
-      }
-
-      const inboxId = getLocalInboxFolderId(accountId);
-      return await syncMailboxTargetedDelta(accessToken, accountId, [inboxId]);
-    } finally {
-      activeFullSyncs.delete(accountId);
-    }
-  })();
-
-  activeFullSyncs.set(accountId, syncPromise);
-
-  return syncPromise;
-});
-
 ipcMain.handle("labels:list", (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
 

@@ -830,28 +830,11 @@ export function EmailClient() {
       if (isSyncing) return;
       try {
         isSyncing = true;
-        const msAccounts = accounts.filter((a) => a.provider === "microsoft");
-        const googleAccounts = accounts.filter((a) => a.provider === "google");
-        const imapAccounts = accounts.filter((a) => a.provider === "imap");
-
-        if (window.electronAPI?.syncMicrosoftEmails) {
-          for (const account of msAccounts) {
+        
+        if (window.electronAPI?.syncMail) {
+          for (const account of accounts) {
             if (isCancelled) break;
-            await window.electronAPI.syncMicrosoftEmails(account.id);
-          }
-        }
-
-        if (window.electronAPI?.syncGmailEmails) {
-          for (const account of googleAccounts) {
-            if (isCancelled) break;
-            await window.electronAPI.syncGmailEmails(account.id);
-          }
-        }
-
-        if (window.electronAPI?.syncImapEmails) {
-          for (const account of imapAccounts) {
-            if (isCancelled) break;
-            await window.electronAPI.syncImapEmails(account.id);
+            await window.electronAPI.syncMail(account.id);
           }
         }
 
@@ -2087,9 +2070,9 @@ export function EmailClient() {
           }
 
           if (provider === "microsoft") {
-            window.electronAPI?.syncMicrosoftInbox?.(accountId).catch(console.error);
+            window.electronAPI?.syncMail?.(accountId).catch(console.error);
           } else if (provider === "google") {
-            window.electronAPI?.syncGmailEmails?.(accountId).catch(console.error);
+            window.electronAPI?.syncMail?.(accountId).catch(console.error);
           }
         } catch (error) {
           console.error("Failed to send email:", error);
