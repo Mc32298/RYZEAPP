@@ -2511,6 +2511,73 @@ ipcMain.handle("imap:sync", async (_event, payload) => {
 // IPC HANDLERS — GENERIC MAIL
 // =============================================================================
 
+/** Returns the locally cached folders and messages for ALL accounts. */
+ipcMain.handle("mail:getAllLocal", () => {
+  // 1. Get all folders from all accounts
+  const folders = db
+    .prepare(
+      `SELECT * FROM folders ORDER BY accountId, path COLLATE NOCASE ASC`,
+    )
+    .all() as any[];
+
+  // 2. Get all emails from all accounts
+  const emailRows = db
+    .prepare(
+      `
+    SELECT
+      id, accountId, folder, subject, bodyPreview,
+      receivedDateTime, isRead, hasAttachments, isStarred,
+      fromName, fromAddress, toRecipients, ccRecipients, snoozedUntil
+    FROM emails
+    ORDER BY receivedDateTime DESC
+  `,
+    )
+    .all() as any[];
+
+  // Group emails by folder ID
+  const messagesByFolder = {} as Record<string, GraphMessage[]>;
+  for (const folder of folders) {
+    messagesByFolder[folder.id] = rowsToMessages(
+      emailRows.filter((r: any) => r.folder === folder.id),
+    );
+  }
+
+  // 3. Get labels
+  const labels = db
+    .prepare(`SELECT * FROM labels ORDER BY accountId, name COLLATE NOCASE ASC`)
+    .all();
+
+  // 4. Get label mapping
+  const labelRows = db
+    .prepare(
+      `
+    SELECT el.messageId, l.id, l.accountId, l.name, l.color, l.createdAt, l.updatedAt
+    FROM email_labels el
+    INNER JOIN labels l ON l.id = el.labelId AND l.accountId = el.accountId
+    ORDER BY l.name COLLATE NOCASE ASC
+  `,
+    )
+    .all() as Array<EmailLabel & { messageId: string }>;
+
+  const labelsByMessageId = labelRows.reduce(
+    (acc, row) => {
+      if (!acc[row.messageId]) acc[row.messageId] = [];
+      acc[row.messageId].push({
+        id: row.id,
+        accountId: row.accountId,
+        name: row.name,
+        color: row.color,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      });
+      return acc;
+    },
+    {} as Record<string, EmailLabel[]>,
+  );
+
+  return { folders, messagesByFolder, labels, labelsByMessageId };
+});
+
 ipcMain.handle("mail:sync", async (_event, payload) => {
   try {
     const accountId = validateAccountId(payload?.accountId);
