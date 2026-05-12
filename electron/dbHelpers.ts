@@ -547,17 +547,15 @@ export function getLocalMessagesByFolder(accountId: string) {
       folder,
       subject,
       bodyPreview,
-      bodyContentType,
-      bodyContent,
       receivedDateTime,
       isRead,
       hasAttachments,
       isStarred,
-      attachments,
       fromName,
       fromAddress,
       toRecipients,
-      ccRecipients
+      ccRecipients,
+      snoozedUntil
     FROM emails
     WHERE accountId = ? AND folder = ?
     ORDER BY receivedDateTime DESC

@@ -3449,8 +3449,8 @@ ipcMain.handle("microsoft-mail:getAllLocal", () => {
     .prepare(
       `
     SELECT
-      id, accountId, folder, subject, bodyPreview, bodyContentType, bodyContent,
-      receivedDateTime, isRead, hasAttachments, isStarred, attachments,
+      id, accountId, folder, subject, bodyPreview,
+      receivedDateTime, isRead, hasAttachments, isStarred,
       fromName, fromAddress, toRecipients, ccRecipients, snoozedUntil
     FROM emails
     ORDER BY receivedDateTime DESC
