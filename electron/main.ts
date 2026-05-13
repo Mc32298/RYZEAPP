@@ -93,12 +93,23 @@ import {
   normalizeAiSummaryResult,
   validateAiEmailPayload,
   validateAiReplyPayload,
+  validateAiExtractionPayload,
   normalizeAiReplyResult,
   sanitizeBackendSettings,
   sanitizeDraftsPayload,
   parseRecipients,
   escapeHtml,
 } from "./validation";
+import {
+  loadBackendSettings,
+  loadAiProviderKeys,
+  getGeminiApiKey,
+  getGeminiModel,
+  getAiProvider,
+  getOllamaConfig,
+  getGeminiApiVersion,
+  getAiProviderKeyStatus,
+} from "./aiUtils";
 import {
   saveFolderSyncState,
   getLabelsByMessageId,
@@ -230,147 +241,6 @@ function userSafeProviderError(context: string, status: number) {
 // =============================================================================
 // AUTO UPDATER
 // =============================================================================
-
-// Disable auto-download so we can prompt the user first
-autoUpdater.autoDownload = false;
-autoUpdater.autoInstallOnAppQuit = true;
-autoUpdater.logger = console;
-
-ipcMain.handle("app:get-version", () => app.getVersion());
-
-ipcMain.handle("updater:check", () => {
-  if (app.isPackaged) {
-    autoUpdater.checkForUpdates();
-  }
-  return true;
-});
-
-ipcMain.handle("updater:start-download", () => {
-  autoUpdater.downloadUpdate();
-  return true;
-});
-
-ipcMain.handle("updater:install", () => {
-  // isSilent=true → no NSIS installer window, isForceRunAfter=true → relaunch after install
-  autoUpdater.quitAndInstall(true, true);
-  return true;
-});
-
-// Broadcast events to the React frontend
-autoUpdater.on("update-available", (info) => {
-  const windows = BrowserWindow.getAllWindows();
-  if (windows.length > 0) {
-    windows[0].webContents.send("updater:available", info.version);
-  }
-});
-
-autoUpdater.on("update-downloaded", () => {
-  const windows = BrowserWindow.getAllWindows();
-  if (windows.length > 0) {
-    windows[0].webContents.send("updater:downloaded");
-  }
-});
-
-autoUpdater.on("update-not-available", () => {
-  console.log("[updater] No update available — already on latest version.");
-});
-
-autoUpdater.on("error", (err) => {
-  console.error("[updater] Error:", err.message);
-  const windows = BrowserWindow.getAllWindows();
-  if (windows.length > 0) {
-    windows[0].webContents.send("updater:error", err.message);
-  }
-});
-
-
-/**
- * Asserts that a value is a non-empty string within the given max length.
- * Throws a descriptive error if the check fails.
- */
-/**
- * Like assertString, but allows null/undefined (returns '' in those cases).
- * Used for optional fields like CC or body.
- */
-function getGeminiApiKey() {
-  const storedKey = loadAiProviderKeys().gemini?.apiKey?.trim();
-  const apiKey = storedKey || process.env.GEMINI_API_KEY?.trim();
-
-  if (!apiKey) {
-    throw new Error(
-      "Gemini API key is missing. Add it in Settings > AI & keys.",
-    );
-  }
-
-  return apiKey;
-}
-
-function getGeminiModel() {
-  const rawModel =
-    loadBackendSettings().geminiModel ||
-    process.env.GEMINI_MODEL?.trim() ||
-    "gemini-2.5-flash";
-
-  // Allow both:
-  // GEMINI_MODEL=gemini-2.5-flash
-  // GEMINI_MODEL=models/gemini-2.5-flash
-  return rawModel.replace(/^models\//, "");
-}
-
-function getAiProvider() {
-  const provider = loadBackendSettings().aiProvider;
-  return provider === "ollama" ? "ollama" : "gemini";
-}
-
-function getOllamaConfig() {
-  const settings = loadBackendSettings();
-  const baseUrl = (settings.ollamaBaseUrl || "http://127.0.0.1:11434").trim();
-  const model = (settings.ollamaModel || "llama3.2").trim();
-
-  if (!model) {
-    throw new Error("Ollama model is missing. Add it in Settings > AI & keys.");
-  }
-
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(baseUrl);
-  } catch {
-    throw new Error("Ollama server URL is invalid.");
-  }
-
-  const isLocalHost =
-    parsedUrl.hostname === "localhost" ||
-    parsedUrl.hostname === "127.0.0.1" ||
-    parsedUrl.hostname === "::1";
-
-  if (parsedUrl.protocol !== "http:" || !isLocalHost) {
-    throw new Error("Ollama server URL must be a local http URL.");
-  }
-
-  return {
-    baseUrl: parsedUrl.origin,
-    model,
-  };
-}
-
-function loadBackendSettings(): BackendSettings {
-  try {
-    if (!fs.existsSync(settingsFilePath)) {
-      return {} as BackendSettings;
-    }
-
-    const parsed = JSON.parse(fs.readFileSync(settingsFilePath, "utf8"));
-    return typeof parsed === "object" && parsed
-      ? (parsed as BackendSettings)
-      : {};
-  } catch (error) {
-    console.error("Failed to load backend settings:", error);
-    return {} as BackendSettings;
-  }
-}
-function getGeminiApiVersion() {
-  return process.env.GEMINI_API_VERSION?.trim() || "v1";
-}
 
 // =============================================================================
 // HTML / EMAIL FORMATTING HELPERS — moved to ./validation.ts
@@ -1228,7 +1098,9 @@ ipcMain.handle("ai:summarize-email", async (_event, payload) => {
 });
 
 ipcMain.handle("get-ai-extractions", async (_event, messageId, bodyText) => {
-  return await getAiExtractions(messageId, bodyText);
+  const { messageId: validatedId, bodyText: validatedBody } =
+    validateAiExtractionPayload(messageId, bodyText);
+  return await getAiExtractions(validatedId, validatedBody);
 });
 
 ipcMain.handle("ai:generate-reply", async (_event, payload) => {

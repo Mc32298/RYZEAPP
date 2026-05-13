@@ -333,6 +333,13 @@ export function validateAiReplyPayload(payload: any) {
   };
 }
 
+export function validateAiExtractionPayload(messageId: unknown, bodyText: unknown) {
+  return {
+    messageId: validateMessageId(messageId),
+    bodyText: optionalString(bodyText, "bodyText", 500_000),
+  };
+}
+
 export function normalizeAiReplyResult(rawText: string) {
   const jsonText = extractJsonObject(rawText);
 

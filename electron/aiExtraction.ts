@@ -1,16 +1,24 @@
 import { db } from "./database";
 import { AiExtraction } from "../src/types/email";
 import crypto from "crypto";
+import { getGeminiApiKey, getGeminiModel } from "./aiUtils";
 
 export async function getAiExtractions(messageId: string, bodyText: string): Promise<AiExtraction[]> {
   const cached = db.prepare("SELECT * FROM ai_extractions WHERE messageId = ?").all(messageId) as AiExtraction[];
   if (cached.length > 0) return cached;
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return [];
+  let apiKey: string;
+  let model: string;
+  try {
+    apiKey = getGeminiApiKey();
+    model = getGeminiModel();
+  } catch (error) {
+    console.error("AI Extraction skipped:", error instanceof Error ? error.message : error);
+    return [];
+  }
 
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
