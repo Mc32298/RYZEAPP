@@ -34,6 +34,10 @@ import {
   resolveManualSyncProvider,
 } from "./mailSyncRouting";
 import {
+  resolveEmailOwningAccountId,
+  resolveMessageAccountId,
+} from "./mailAccountOwnership";
+import {
   createComposeDraft,
   resolveCurrentUserEmail,
   resolveComposerAccount,
@@ -653,11 +657,19 @@ export function EmailClient() {
 
       const mapped = Object.entries(result.messagesByFolder || {})
         .flatMap(([folderId, messages]) => {
-          const ownerAccountId = folderAccountMap.get(folderId) || "";
+          const folderAccountId = folderAccountMap.get(folderId) || "";
           return (messages as any[]).map((message) => {
-            message.accountId = ownerAccountId;
+            const accountId = resolveMessageAccountId({
+              folderAccountId,
+              messageAccountId:
+                typeof message?.accountId === "string" ? message.accountId : "",
+            });
+
             return {
-              ...toEmailThread(folderId, message),
+              ...toEmailThread(folderId, {
+                ...message,
+                accountId,
+              }),
               labels: labelsByMessageId[message.id] || [],
             };
           });
@@ -1336,7 +1348,16 @@ export function EmailClient() {
       setSelectedEmailId(email.id);
 
       const realMessageId = email.messageId;
-      const owningAccountId = email.accountId || currentAccountId;
+      const owningAccountId = resolveEmailOwningAccountId({
+        email,
+        mailFolders,
+        currentAccountId,
+      });
+
+      if (!owningAccountId) {
+        console.error("Failed to resolve owning account for email:", email);
+        return;
+      }
 
       console.log("[select email]", {
         emailId: email.id,
@@ -1437,7 +1458,7 @@ export function EmailClient() {
         }
       }
     },
-    [currentAccountId, accounts],
+    [currentAccountId, accounts, mailFolders],
   );
 
   const handleToggleStar = useCallback(
@@ -1453,7 +1474,12 @@ export function EmailClient() {
         ),
       );
 
-      const starAccountId = emailToUpdate.accountId || currentAccountId;
+      const starAccountId = resolveEmailOwningAccountId({
+        email: emailToUpdate,
+        mailFolders,
+        currentAccountId,
+      });
+      if (!starAccountId) return;
       const starAccount = accounts.find((a) => a.id === starAccountId);
 
       window.electronAPI
@@ -1466,7 +1492,7 @@ export function EmailClient() {
           console.error("Failed to toggle star on server:", error),
         );
     },
-    [emails, currentAccountId, accounts],
+    [emails, currentAccountId, accounts, mailFolders],
   );
 
   const handleDownloadAttachment = useCallback(
@@ -1477,7 +1503,17 @@ export function EmailClient() {
       }
 
       const email = emails.find((e) => e.messageId === messageId);
-      const owningAccountId = email?.accountId || currentAccountId;
+      const owningAccountId = email
+        ? resolveEmailOwningAccountId({
+            email,
+            mailFolders,
+            currentAccountId,
+          })
+        : currentAccountId;
+
+      if (!owningAccountId) {
+        throw new Error("Unable to resolve the account for this attachment.");
+      }
 
       try {
         const result =
@@ -1498,7 +1534,7 @@ export function EmailClient() {
         );
       }
     },
-    [currentAccountId, emails],
+    [currentAccountId, emails, mailFolders],
   );
 
   const handleMarkUnread = useCallback(
@@ -1514,7 +1550,12 @@ export function EmailClient() {
 
       if (selectedEmailId === id) setSelectedEmailId(null);
 
-      const unreadAccountId = emailToUpdate.accountId || currentAccountId;
+      const unreadAccountId = resolveEmailOwningAccountId({
+        email: emailToUpdate,
+        mailFolders,
+        currentAccountId,
+      });
+      if (!unreadAccountId) return;
       
       window.electronAPI
         ?.markEmailAsUnread?.(unreadAccountId, emailToUpdate.messageId)
@@ -1522,7 +1563,7 @@ export function EmailClient() {
           console.error("Failed to mark email as unread:", error),
         );
     },
-    [selectedEmailId, emails, currentAccountId],
+    [selectedEmailId, emails, currentAccountId, mailFolders],
   );
 
   const handleMarkRead = useCallback(
@@ -1536,7 +1577,12 @@ export function EmailClient() {
         ),
       );
 
-      const readAccountId = emailToUpdate.accountId || currentAccountId;
+      const readAccountId = resolveEmailOwningAccountId({
+        email: emailToUpdate,
+        mailFolders,
+        currentAccountId,
+      });
+      if (!readAccountId) return;
 
       window.electronAPI
         ?.markEmailAsRead?.(readAccountId, emailToUpdate.messageId)
@@ -1544,7 +1590,7 @@ export function EmailClient() {
           console.error("Failed to mark email as read:", error),
         );
     },
-    [emails, currentAccountId],
+    [emails, currentAccountId, mailFolders],
   );
 
   const handleSnooze = useCallback(
@@ -1553,10 +1599,19 @@ export function EmailClient() {
       if (!email || !window.electronAPI?.snoozeEmail) return;
 
       const snoozedUntil = snoozedUntilOverride || getDefaultSnoozeUntilIso();
+      const accountId = resolveEmailOwningAccountId({
+        email,
+        mailFolders,
+        currentAccountId,
+      });
+
+      if (!accountId) {
+        throw new Error("Unable to resolve the account for this email.");
+      }
 
       try {
         await window.electronAPI.snoozeEmail({
-          accountId: email.accountId || currentAccountId,
+          accountId,
           messageId: email.messageId,
           snoozedUntil,
         });
@@ -1567,12 +1622,19 @@ export function EmailClient() {
 
       if (selectedEmailId === id) setSelectedEmailId(null);
     },
-    [currentAccountId, emails, fetchLocalAndSetUI, selectedEmailId],
+    [currentAccountId, emails, fetchLocalAndSetUI, selectedEmailId, mailFolders],
   );
 
   const moveEmailToFolderAndRefresh = useCallback(
     async (email: EmailThread, destinationFolderId: string) => {
-      const accountId = email.accountId || currentAccount.id;
+      const accountId = resolveEmailOwningAccountId({
+        email,
+        mailFolders,
+        currentAccountId: currentAccount.id,
+      });
+      if (!accountId) {
+        throw new Error("Unable to resolve the account for this email.");
+      }
       const sourceFolderId = email.folderId || email.folder;
       const provider =
         accounts.find((account) => account.id === accountId)?.provider ??
@@ -1606,7 +1668,13 @@ export function EmailClient() {
       await silentlyRefreshMailboxUI();
       return result;
     },
-    [accounts, currentAccount.id, currentAccount.provider, silentlyRefreshMailboxUI],
+    [
+      accounts,
+      currentAccount.id,
+      currentAccount.provider,
+      mailFolders,
+      silentlyRefreshMailboxUI,
+    ],
   );
 
   const handleArchive = useCallback(
@@ -1729,7 +1797,14 @@ export function EmailClient() {
       if (!emailToMove) {
         return false;
       }
-      const accountId = emailToMove.accountId || currentAccount.id;
+      const accountId = resolveEmailOwningAccountId({
+        email: emailToMove,
+        mailFolders,
+        currentAccountId: currentAccount.id,
+      });
+      if (!accountId) {
+        return false;
+      }
       const provider =
         accounts.find((account) => account.id === accountId)?.provider ??
         currentAccount.provider;
@@ -1803,6 +1878,7 @@ export function EmailClient() {
       currentAccount.id,
       currentAccount.provider,
       emails,
+      mailFolders,
       selectedEmailId,
       silentlyRefreshMailboxUI,
     ],
@@ -2062,27 +2138,36 @@ export function EmailClient() {
         body: draft.body,
       };
 
-      if (window.electronAPI?.sendEmail) {
-        try {
-          setDrafts((prev) => prev.filter((d) => d.id !== id));
+      if (provider === "imap") {
+        window.alert(
+          "Sending mail is not available for IMAP accounts in this version. Use an Outlook or Gmail account to send, or send from your provider's webmail.",
+        );
+        return;
+      }
 
-          try {
-            await window.electronAPI.sendEmail(sendPayload);
-          } catch (error) {
-            console.error("Failed to send email:", error);
-            setDrafts((prev) => [...prev, draft]);
-            alert("Failed to send email. The draft was restored.");
-          }
+      if (!window.electronAPI?.sendEmail) {
+        window.alert(
+          "Send mail is unavailable (desktop bridge missing). Fully quit and restart the app, then try again.",
+        );
+        return;
+      }
 
-          if (provider === "microsoft") {
-            window.electronAPI?.syncMail?.(accountId).catch(console.error);
-          } else if (provider === "google") {
-            window.electronAPI?.syncMail?.(accountId).catch(console.error);
-          }
-        } catch (error) {
-          console.error("Failed to send email:", error);
-          alert("Failed to send email. Check console for details.");
+      try {
+        setDrafts((prev) => prev.filter((d) => d.id !== id));
+
+        await window.electronAPI.sendEmail(sendPayload);
+
+        if (provider === "microsoft") {
+          window.electronAPI?.syncMail?.(accountId).catch(console.error);
+        } else if (provider === "google") {
+          window.electronAPI?.syncMail?.(accountId).catch(console.error);
         }
+      } catch (error) {
+        console.error("Failed to send email:", error);
+        setDrafts((prev) => [...prev, draft]);
+        const detail =
+          error instanceof Error ? error.message : "Unknown error.";
+        window.alert(`Failed to send email. The draft was restored.\n\n${detail}`);
       }
     },
     [accounts, currentAccount, drafts],

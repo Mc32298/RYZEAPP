@@ -396,25 +396,40 @@ export function sanitizeDraftsPayload(drafts: unknown) {
 }
 
 /**
- * Parses a comma-separated list of email addresses into the Graph API recipient format.
+ * Parses a comma- or semicolon-separated list of email addresses into the Graph API recipient format.
+ * Accepts optional display names in the form `Name <user@host>`.
  * Throws if any address fails basic validation.
  */
+const simpleEmailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function parseSingleRecipientToken(token: string): string {
+  const trimmed = token.trim();
+  if (!trimmed) {
+    throw new Error("Invalid email address: (empty)");
+  }
+
+  const angle = trimmed.match(/<([^<>]+@[^<>]+)>/);
+  const candidate = (angle?.[1] ?? trimmed).trim();
+
+  if (!simpleEmailRe.test(candidate)) {
+    throw new Error(`Invalid email address: ${trimmed}`);
+  }
+
+  return candidate;
+}
+
 export function parseRecipients(emailsString: string) {
-  if (!emailsString) return [];
+  if (!emailsString?.trim()) return [];
 
-  return emailsString
+  const normalized = emailsString.replace(/;/g, ",");
+
+  return normalized
     .split(",")
-    .map((email) => email.trim())
+    .map((part) => part.trim())
     .filter(Boolean)
-    .map((email) => {
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        throw new Error(`Invalid email address: ${email}`);
-      }
-
-      return {
-        emailAddress: {
-          address: email,
-        },
-      };
-    });
+    .map((part) => ({
+      emailAddress: {
+        address: parseSingleRecipientToken(part),
+      },
+    }));
 }

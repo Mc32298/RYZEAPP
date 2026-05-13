@@ -20,8 +20,10 @@ import * as path from "path";
 import * as fs from "fs";
 import http from "http"; // Used for the local OAuth callback server
 import { resolveMarkReadValue } from "./mailReadState";
+import { getAiExtractions } from "./aiExtraction";
 import { buildGraphReplyPayload } from "./mailReplyPayload";
 import { isValidAccountId } from "./accountId";
+import { getAccountProviderKind } from "./accountProvider";
 import { buildGmailMoveLabelMutation } from "./gmailMove";
 import { deriveSyncHealth, deriveTokenHealth } from "./accountHealth";
 import { MicrosoftProvider } from "./microsoftProvider";
@@ -39,10 +41,8 @@ import {
   type LocalImapMessageRow,
 } from "./imapSync";
 import {
-  buildGoogleTokenExchangeDebugContext,
-  formatGoogleTokenExchangeError,
-  isGoogleUnauthorizedClientError,
-} from "./googleOAuth";
+  getGoogleOAuthEnv,
+} from "./googleOAuthConfig";
 import crypto from "crypto"; // Used for PKCE code verifier / challenge generation
 import { fileURLToPath } from "url";
 import { db, dbPath } from "./database";
@@ -194,8 +194,8 @@ const microsoftProvider = new MicrosoftProvider();
 const gmailProvider = new GmailProvider();
 
 function getProviderForAccount(accountId: string): MailProvider {
-  if (accountId.startsWith("ms-")) return microsoftProvider;
-  if (accountId.startsWith("google-")) return gmailProvider;
+  if (getAccountProviderKind(accountId) === "microsoft") return microsoftProvider;
+  if (getAccountProviderKind(accountId) === "google") return gmailProvider;
   throw new Error(`Unsupported account provider for ID: ${accountId}`);
 }
 
@@ -1225,6 +1225,10 @@ ipcMain.handle("ai:summarize-email", async (_event, payload) => {
   return {
     ...normalizeAiSummaryResult(summary),
   };
+});
+
+ipcMain.handle("get-ai-extractions", async (_event, messageId, bodyText) => {
+  return await getAiExtractions(messageId, bodyText);
 });
 
 ipcMain.handle("ai:generate-reply", async (_event, payload) => {
@@ -2295,7 +2299,12 @@ ipcMain.handle("microsoft-account:delete", async (_event, payload) => {
 // =============================================================================
 
 ipcMain.handle("google-oauth:connect", async () => {
-  const redirect = new URL(GOOGLE_REDIRECT_URI);
+  const {
+    clientId: googleClientId,
+    redirectUri: googleRedirectUri,
+    scope: googleScope,
+  } = getGoogleOAuthEnv();
+  const redirect = new URL(googleRedirectUri);
 
   const verifier = toBase64Url(crypto.randomBytes(64));
   const challenge = toBase64Url(crypto.createHash("sha256").update(verifier).digest());
@@ -2303,10 +2312,10 @@ ipcMain.handle("google-oauth:connect", async () => {
 
   const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   authUrl.search = new URLSearchParams({
-    client_id: GOOGLE_CLIENT_ID,
+    client_id: googleClientId,
     response_type: "code",
-    redirect_uri: GOOGLE_REDIRECT_URI,
-    scope: GOOGLE_SCOPE,
+    redirect_uri: googleRedirectUri,
+    scope: googleScope,
     access_type: "offline",
     prompt: "consent select_account",
     code_challenge_method: "S256",
@@ -2325,7 +2334,7 @@ ipcMain.handle("google-oauth:connect", async () => {
         return;
       }
 
-      const requestUrl = new URL(req.url, GOOGLE_REDIRECT_URI);
+      const requestUrl = new URL(req.url, googleRedirectUri);
 
       if (requestUrl.pathname !== redirect.pathname) {
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -2375,10 +2384,10 @@ ipcMain.handle("google-oauth:connect", async () => {
   // Exchange auth code for tokens via Supabase Edge Function proxy.
   const tokenPayload = await gmailProvider.exchangeTokenViaProxy({
     grantType: "authorization_code",
-    clientId: GOOGLE_CLIENT_ID,
+    clientId: googleClientId,
     code: authCode,
     codeVerifier: verifier,
-    redirectUri: GOOGLE_REDIRECT_URI,
+    redirectUri: googleRedirectUri,
   });
 
   // Fetch user profile
@@ -2410,10 +2419,10 @@ ipcMain.handle("google-oauth:connect", async () => {
     accessToken: tokenPayload.access_token,
     refreshToken: tokenPayload.refresh_token,
     expiresAt: Date.now() + tokenPayload.expires_in * 1000,
-    scope: tokenPayload.scope || GOOGLE_SCOPE,
+    scope: tokenPayload.scope || googleScope,
     tokenType: tokenPayload.token_type,
-    clientId: GOOGLE_CLIENT_ID,
-    oauthScope: GOOGLE_SCOPE,
+    clientId: googleClientId,
+    oauthScope: googleScope,
   });
 
   // Pre-create Gmail system folders in the DB
@@ -2444,6 +2453,31 @@ ipcMain.handle("google-account:delete", async (_event, payload) => {
   })();
 
   gmailProvider.deleteToken(accountId);
+
+  return { success: true };
+});
+
+ipcMain.handle("account:delete", async (_event, payload) => {
+  const accountId = validateAccountId(payload?.accountId);
+  const providerKind = getAccountProviderKind(accountId);
+
+  if (providerKind === "microsoft" || providerKind === "google") {
+    const provider = getProviderForAccount(accountId);
+    await provider.deleteAccount(accountId);
+    return { success: true };
+  }
+
+  db.transaction(() => {
+    db.prepare("DELETE FROM email_labels WHERE accountId = ?").run(accountId);
+    db.prepare("DELETE FROM emails WHERE accountId = ?").run(accountId);
+    db.prepare("DELETE FROM folders WHERE accountId = ?").run(accountId);
+  })();
+
+  const accounts = loadImapAccounts();
+  if (accounts[accountId]) {
+    delete accounts[accountId];
+    saveImapAccounts(accounts);
+  }
 
   return { success: true };
 });
@@ -2597,9 +2631,19 @@ ipcMain.handle("mail:get-body", async (_event, payload) => {
 });
 
 ipcMain.handle("mail:send", async (_event, payload) => {
-  const accountId = validateAccountId(payload?.accountId);
-  const provider = getProviderForAccount(accountId);
-  return await provider.sendEmail(accountId, payload);
+  try {
+    const accountId = validateAccountId(payload?.accountId);
+    if (getAccountProviderKind(accountId) === "imap") {
+      throw new Error(
+        "Sending mail is not supported for IMAP accounts yet. Use Outlook or Gmail, or your provider's webmail to send.",
+      );
+    }
+    const provider = getProviderForAccount(accountId);
+    return await provider.sendEmail(accountId, payload);
+  } catch (error) {
+    console.error("mail:send failed:", error);
+    throw error;
+  }
 });
 
 ipcMain.handle("mail:mark-read", async (_event, payload) => {
@@ -2630,7 +2674,7 @@ ipcMain.handle("mail:toggle-star", async (_event, payload) => {
 ipcMain.handle("mail:move", async (_event, payload) => {
   const accountId = validateAccountId(payload?.accountId);
   const messageId = assertString(payload?.messageId, "messageId", 2048);
-  const destination = assertString(payload?.destination, "destination", 64);
+  const destination = assertString(payload?.destination, "destination", 2048);
   const provider = getProviderForAccount(accountId);
   await provider.moveMessage(accountId, messageId, destination);
   return { success: true };

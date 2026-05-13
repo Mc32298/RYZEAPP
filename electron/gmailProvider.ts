@@ -14,6 +14,7 @@ import {
   buildGoogleTokenExchangeDebugContext,
   isGoogleUnauthorizedClientError,
 } from "./googleOAuth";
+import { getGoogleOAuthEnv } from "./googleOAuthConfig";
 import { buildGmailMoveLabelMutation } from "./gmailMove";
 
 import {
@@ -32,16 +33,10 @@ const googleTokenFilePath = path.join(
   "google-oauth-tokens.json",
 );
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
-const GOOGLE_TOKEN_PROXY_URL = process.env.GOOGLE_OAUTH_TOKEN_PROXY_URL || "";
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
-const GOOGLE_REDIRECT_URI =
-  process.env.GOOGLE_OAUTH_REDIRECT_URI || "http://127.0.0.1:53682";
-
 const tokenRefreshLeadMs = 60 * 1000;
 
 function getGoogleTokenProxyUrl() {
-  const rawValue = GOOGLE_TOKEN_PROXY_URL.trim();
+  const rawValue = getGoogleOAuthEnv().tokenProxyUrl;
   if (!rawValue) {
     throw new Error(
       "Missing GOOGLE_OAUTH_TOKEN_PROXY_URL. Configure your Supabase Edge Function endpoint.",
@@ -95,7 +90,7 @@ async function exchangeGoogleTokenViaProxy(request: GoogleTokenProxyRequest) {
     "Content-Type": "application/json",
   };
 
-  const anonKey = SUPABASE_ANON_KEY.trim();
+  const { supabaseAnonKey: anonKey, redirectUri } = getGoogleOAuthEnv();
   if (anonKey) {
     headers.apikey = anonKey;
     if (anonKey.split(".").length === 3) {
@@ -117,7 +112,7 @@ async function exchangeGoogleTokenViaProxy(request: GoogleTokenProxyRequest) {
       redirectUri:
         request.grantType === "authorization_code"
           ? request.redirectUri
-          : GOOGLE_REDIRECT_URI,
+          : redirectUri,
     });
     if (
       response.status === 401 &&
@@ -177,6 +172,10 @@ function saveGoogleTokens(tokens: Record<string, GoogleStoredToken>) {
 export class GmailProvider implements MailProvider {
   private activeTokenRefreshPromises = new Map<string, Promise<string>>();
 
+  async exchangeTokenViaProxy(request: GoogleTokenProxyRequest) {
+    return exchangeGoogleTokenViaProxy(request);
+  }
+
   async refreshToken(accountId: string): Promise<string> {
     const tokens = loadGoogleTokens();
     const token = tokens[accountId];
@@ -192,7 +191,7 @@ export class GmailProvider implements MailProvider {
 
     const refreshPromise = (async () => {
       try {
-        const clientId = token.clientId || GOOGLE_CLIENT_ID;
+        const clientId = token.clientId || getGoogleOAuthEnv().clientId;
         let refreshed: {
           access_token: string;
           refresh_token?: string;

@@ -97,11 +97,11 @@ CREATE INDEX IF NOT EXISTS idx_folder_sync_state_account
 ON folder_sync_state(accountId);
 
   CREATE TABLE IF NOT EXISTS ai_extractions (
+    id         TEXT PRIMARY KEY,
     messageId  TEXT NOT NULL,
     type       TEXT NOT NULL,
     content    TEXT NOT NULL,
     createdAt  TEXT NOT NULL,
-    PRIMARY KEY (messageId, type),
     FOREIGN KEY(messageId) REFERENCES emails(id) ON DELETE CASCADE
   );
 `);

@@ -138,7 +138,7 @@ export async function gmailFetchMessagesForLabel(
   accessToken: string,
   accountId: string,
   labelId: string,
-  maxMessages: number,
+  maxMessages = 50,
 ) {
   const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
   listUrl.searchParams.set("labelIds", labelId);

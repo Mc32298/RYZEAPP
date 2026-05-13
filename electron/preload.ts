@@ -233,6 +233,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
       provider: assertString(provider, "provider", 32),
     }),
 
+  getAiExtractions: (messageId: string, bodyText: string) =>
+    ipcRenderer.invoke(
+      "get-ai-extractions",
+      assertString(messageId, "messageId", 2048),
+      assertString(bodyText, "bodyText", 1_000_000),
+    ),
+
   // --- GENERIC MAIL OPERATIONS ---
   syncMail: (accountId: string) =>
     ipcRenderer.invoke("mail:sync", { accountId: assertString(accountId, "accountId", 256) }),
@@ -283,7 +290,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("mail:move", {
       accountId: assertString(accountId, "accountId", 256),
       messageId: assertString(messageId, "messageId", 2048),
-      destination: assertString(destination, "destination", 64),
+      destination: assertString(destination, "destination", 2048),
     }),
 
   snoozeEmail: (payload: SnoozeEmailPayload) => {

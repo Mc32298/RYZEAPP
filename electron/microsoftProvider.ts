@@ -7,13 +7,13 @@ import {
   optionalString,
   sanitizeOutgoingHtml,
   parseRecipients,
-  validateDestinationFolder,
 } from "./validation";
 import * as fs from "fs";
 import * as path from "path";
 import { safeStorage, app } from "electron";
 
 import { buildGraphReplyPayload } from "./mailReplyPayload";
+import { resolveMicrosoftDestinationId } from "./microsoftMove";
 
 import {
   syncMailboxInitialFull,
@@ -380,21 +380,22 @@ export class MicrosoftProvider implements MailProvider {
   }
 
   async moveMessage(accountId: string, messageId: string, destination: string): Promise<void> {
-    const destinationFolderKey = validateDestinationFolder(destination);
     const accessToken = await this.refreshToken(accountId);
     const encodedMessageId = encodeURIComponent(messageId);
 
-    const targetFolderRow = db
+    const targetFolderRows = db
       .prepare(
         `
-      SELECT id FROM folders 
-      WHERE accountId = ? AND wellKnownName = ? 
-      LIMIT 1
+      SELECT id, wellKnownName FROM folders 
+      WHERE accountId = ?
     `,
       )
-      .get(accountId, destinationFolderKey) as { id?: string } | undefined;
+      .all(accountId) as Array<{ id: string; wellKnownName?: string | null }>;
 
-    const actualDestinationDbId = targetFolderRow?.id || destinationFolderKey;
+    const actualDestinationDbId = resolveMicrosoftDestinationId({
+      destination,
+      folders: targetFolderRows,
+    });
 
     const response = await fetch(
       `https://graph.microsoft.com/v1.0/me/messages/${encodedMessageId}/move`,
@@ -405,7 +406,7 @@ export class MicrosoftProvider implements MailProvider {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          destinationId: destinationFolderKey,
+          destinationId: actualDestinationDbId,
         }),
       },
     );

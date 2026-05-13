@@ -110,6 +110,7 @@ export interface DetectedEvent {
 }
 
 export interface AiExtraction {
+  id: string;
   messageId: string;
   type: 'event' | 'task';
   content: string; // JSON stringified DetectedEvent or Task

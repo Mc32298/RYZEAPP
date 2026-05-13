@@ -44,6 +44,10 @@ export default defineConfig(({ mode }) => {
     "process.env.GOOGLE_OAUTH_REDIRECT_URI": JSON.stringify(
       env.GOOGLE_OAUTH_REDIRECT_URI || "http://127.0.0.1:53682"
     ),
+    "process.env.GOOGLE_OAUTH_SCOPE": JSON.stringify(
+      env.GOOGLE_OAUTH_SCOPE ||
+        "openid email profile https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send"
+    ),
     "process.env.GOOGLE_OAUTH_TOKEN_PROXY_URL": JSON.stringify(
       env.GOOGLE_OAUTH_TOKEN_PROXY_URL || ""
     ),
