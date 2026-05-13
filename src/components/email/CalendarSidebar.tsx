@@ -13,6 +13,8 @@ import {
 interface CalendarSidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  onToggleExpand?: () => void;
+  isExpanded?: boolean;
   events: any[];
   isLoading: boolean;
   lastSyncedAt: Date | null;

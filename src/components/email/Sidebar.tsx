@@ -441,23 +441,32 @@ export function Sidebar({
     (label) => label.accountId === currentAccount.id,
   );
 
-  if (isCollapsed) return null;
-
   return (
     <>
-      <div className="relative flex h-full min-h-0 w-[var(--sidebar-w)] flex-col border-r border-[var(--border-subtle)] bg-[var(--bg-1)] px-2 py-2 text-[var(--fg-1)]">
+      <div 
+        className={cn(
+          "relative flex h-full min-h-0 flex-col border-r border-[var(--border-subtle)] bg-[var(--bg-1)] py-2 text-[var(--fg-1)] transition-all duration-300",
+          isCollapsed ? "w-[72px] px-1" : "w-[var(--sidebar-w)] px-2"
+        )}
+      >
         <div className="pb-3">
           <button
             onClick={onCompose}
-            className="flex h-9 w-full items-center justify-between rounded-[var(--radius-ryze-md)] bg-[var(--ryze-accent)] px-3 text-[13px] font-medium text-[var(--ryze-accent-fg)] transition-colors hover:bg-[var(--ryze-accent-hover)]"
+            className={cn(
+              "flex h-9 w-full items-center rounded-[var(--radius-ryze-md)] bg-[var(--ryze-accent)] text-[13px] font-medium text-[var(--ryze-accent-fg)] transition-colors hover:bg-[var(--ryze-accent-hover)]",
+              isCollapsed ? "justify-center px-0" : "justify-between px-3"
+            )}
+            title={isCollapsed ? "Compose (C)" : undefined}
           >
             <span className="flex items-center gap-2">
               <FileEdit size={16} />
-              Compose
+              {!isCollapsed && "Compose"}
             </span>
-            <span className="rounded-[4px] bg-black/10 px-1.5 py-px font-mono-jetbrains text-[10px]">
-              C
-            </span>
+            {!isCollapsed && (
+              <span className="rounded-[4px] bg-black/10 px-1.5 py-px font-mono-jetbrains text-[10px]">
+                C
+              </span>
+            )}
           </button>
         </div>
 
@@ -468,14 +477,16 @@ export function Sidebar({
                 onFolderSelect("all-inboxes");
                 onLabelSelect("");
               }}
+              title={isCollapsed ? "All Inboxes" : undefined}
               className={cn(
-                "flex w-full items-center justify-between rounded-[6px] border-l-2 px-2.5 py-1.5 text-[13px] transition-colors",
+                "flex w-full items-center rounded-[6px] border-l-2 py-1.5 text-[13px] transition-colors",
+                isCollapsed ? "justify-center px-0" : "justify-between px-2.5",
                 activeFolder === "all-inboxes" && !activeLabelId
                   ? "border-[var(--ryze-accent)] bg-[var(--bg-3)] font-medium text-[var(--fg-0)]"
                   : "border-transparent text-[var(--fg-1)] hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]",
               )}
             >
-              <div className="flex items-center gap-3">
+              <div className={cn("flex items-center", isCollapsed ? "justify-center" : "gap-3")}>
                 <Inbox
                   size={15}
                   className={
@@ -484,9 +495,9 @@ export function Sidebar({
                       : ""
                   }
                 />
-                All Inboxes
+                {!isCollapsed && "All Inboxes"}
               </div>
-              {allInboxesUnread > 0 && (
+              {!isCollapsed && allInboxesUnread > 0 && (
                 <span className="font-mono-jetbrains text-[10.5px] font-medium text-[var(--fg-1)]">
                   {allInboxesUnread}
                 </span>
@@ -495,6 +506,28 @@ export function Sidebar({
 
             {systemFolders.map(({ folder, icon: Icon, label, hasChildren }) => {
               const isActive = activeFolder === folder.id && !activeLabelId;
+              
+              if (isCollapsed) {
+                return (
+                  <button
+                    key={folder.id}
+                    onClick={() => handleFolderClick(currentAccount, folder.id)}
+                    title={label}
+                    className={cn(
+                      "flex w-full items-center justify-center rounded-[6px] border-l-2 py-1.5 text-[13px] transition-colors",
+                      isActive
+                        ? "border-[var(--ryze-accent)] bg-[var(--bg-3)] font-medium text-[var(--fg-0)]"
+                        : "border-transparent text-[var(--fg-1)] hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]",
+                    )}
+                  >
+                    <Icon
+                      size={15}
+                      className={isActive ? "text-[var(--ryze-accent)]" : ""}
+                    />
+                  </button>
+                );
+              }
+
               if (hasChildren) {
                 return (
                   <FolderItem
@@ -557,21 +590,23 @@ export function Sidebar({
                     onFolderSelect(key);
                     onLabelSelect("");
                   }}
+                  title={isCollapsed ? label : undefined}
                   className={cn(
-                    "flex w-full items-center justify-between rounded-[6px] border-l-2 px-2.5 py-1.5 text-[13px] transition-colors",
+                    "flex w-full items-center rounded-[6px] border-l-2 py-1.5 text-[13px] transition-colors",
+                    isCollapsed ? "justify-center px-0" : "justify-between px-2.5",
                     isActive
                       ? "border-[var(--ryze-accent)] bg-[var(--bg-3)] font-medium text-[var(--fg-0)]"
                       : "border-transparent text-[var(--fg-1)] hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]",
                   )}
                 >
-                  <div className="flex items-center gap-3">
+                  <div className={cn("flex items-center", isCollapsed ? "justify-center" : "gap-3")}>
                     <Icon
                       size={15}
                       className={isActive ? "text-[var(--ryze-accent)]" : ""}
                     />
-                    {label}
+                    {!isCollapsed && label}
                   </div>
-                  {unread > 0 && (
+                  {!isCollapsed && unread > 0 && (
                     <span className="font-mono-jetbrains text-[10.5px] font-medium text-[var(--fg-1)]">
                       {unread}
                     </span>
@@ -582,22 +617,26 @@ export function Sidebar({
           </div>
 
           <div className="space-y-0.5">
-            <div className="flex items-center justify-between px-2.5 pb-1 pt-4">
-              <span className="font-mono-jetbrains text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--fg-3)]">
-                Accounts
-              </span>
-              <span className="font-mono-jetbrains text-[10px] text-[var(--fg-3)]">
-                {accounts.length}
-              </span>
-            </div>
+            {!isCollapsed && (
+              <div className="flex items-center justify-between px-2.5 pb-1 pt-4">
+                <span className="font-mono-jetbrains text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--fg-3)]">
+                  Accounts
+                </span>
+                <span className="font-mono-jetbrains text-[10px] text-[var(--fg-3)]">
+                  {accounts.length}
+                </span>
+              </div>
+            )}
             {accounts.map((account) => {
               const isCurrent = account.id === currentAccount.id;
               return (
                 <button
                   key={account.id}
                   onClick={() => onAccountSwitch?.(account)}
+                  title={isCollapsed ? account.email : undefined}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-[6px] px-2.5 py-2 text-left transition-colors",
+                    "flex w-full items-center rounded-[6px] py-2 text-left transition-colors",
+                    isCollapsed ? "justify-center px-0" : "gap-2 px-2.5",
                     isCurrent
                       ? "bg-[var(--bg-2)] text-[var(--fg-0)]"
                       : "text-[var(--fg-1)] hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]",
@@ -609,171 +648,188 @@ export function Sidebar({
                   >
                     {account.initials}
                   </div>
-                  <span className="min-w-0 flex-1 truncate">{account.email}</span>
-                  <span
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{
-                      backgroundColor: isCurrent
-                        ? "var(--success-token)"
-                        : "var(--warning-token)",
-                    }}
-                  />
+                  {!isCollapsed && (
+                    <>
+                      <span className="min-w-0 flex-1 truncate">{account.email}</span>
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{
+                          backgroundColor: isCurrent
+                            ? "var(--success-token)"
+                            : "var(--warning-token)",
+                        }}
+                      />
+                    </>
+                  )}
                 </button>
               );
             })}
           </div>
 
-          <div className="space-y-0.5">
-            <div className="group flex items-center justify-between pb-1 pl-2.5 pr-3 pt-3">
-              <span className="font-mono-jetbrains text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--fg-3)]">
-                Folders
-              </span>
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  triggerCreate("folder", currentAccount);
-                }}
-                className="relative z-10 ml-auto flex items-center justify-center rounded-[var(--radius-ryze-sm)] p-1 text-[var(--fg-3)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
-                title="Create folder"
-              >
-                <Plus size={14} strokeWidth={2.5} />
-              </button>
-            </div>
+          {!isCollapsed && (
+            <>
+              <div className="space-y-0.5">
+                <div className="group flex items-center justify-between pb-1 pl-2.5 pr-3 pt-3">
+                  <span className="font-mono-jetbrains text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--fg-3)]">
+                    Folders
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      triggerCreate("folder", currentAccount);
+                    }}
+                    className="relative z-10 ml-auto flex items-center justify-center rounded-[var(--radius-ryze-sm)] p-1 text-[var(--fg-3)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
+                    title="Create folder"
+                  >
+                    <Plus size={14} strokeWidth={2.5} />
+                  </button>
+                </div>
 
-            {customRoots.map((folder) => (
-              <FolderItem
-                key={folder.id}
-                folder={folder}
-                allFolders={currentAccountFolders}
-                depth={0}
-                activeFolder={activeFolder}
-                activeLabelId={activeLabelId}
-                unreadCounts={unreadCounts}
-                onFolderClick={(fid: string) => handleFolderClick(currentAccount, fid)}
-                onRename={onRenameFolder}
-                onEmpty={onEmptyFolder}
-                onDelete={onDeleteFolder}
-                openPrompt={openPrompt}
-                openConfirm={openConfirm}
-                onEmailDropToFolder={onEmailDropToFolder}
-                icon={Folder}
-              />
-            ))}
-          </div>
+                {customRoots.map((folder) => (
+                  <FolderItem
+                    key={folder.id}
+                    folder={folder}
+                    allFolders={currentAccountFolders}
+                    depth={0}
+                    activeFolder={activeFolder}
+                    activeLabelId={activeLabelId}
+                    unreadCounts={unreadCounts}
+                    onFolderClick={(fid: string) => handleFolderClick(currentAccount, fid)}
+                    onRename={onRenameFolder}
+                    onEmpty={onEmptyFolder}
+                    onDelete={onDeleteFolder}
+                    openPrompt={openPrompt}
+                    openConfirm={openConfirm}
+                    onEmailDropToFolder={onEmailDropToFolder}
+                    icon={Folder}
+                  />
+                ))}
+              </div>
 
-          <div className="space-y-0.5">
-            <div className="group flex items-center justify-between pb-1 pl-2.5 pr-3 pt-3">
-              <span className="font-mono-jetbrains text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--fg-3)]">
-                Labels
-              </span>
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  triggerCreate("label", currentAccount);
-                }}
-                className="relative z-10 ml-auto flex items-center justify-center rounded-[var(--radius-ryze-sm)] p-1 text-[var(--fg-3)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
-                title="Create label"
-              >
-                <Plus size={14} strokeWidth={2.5} />
-              </button>
-            </div>
+              <div className="space-y-0.5">
+                <div className="group flex items-center justify-between pb-1 pl-2.5 pr-3 pt-3">
+                  <span className="font-mono-jetbrains text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--fg-3)]">
+                    Labels
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      triggerCreate("label", currentAccount);
+                    }}
+                    className="relative z-10 ml-auto flex items-center justify-center rounded-[var(--radius-ryze-sm)] p-1 text-[var(--fg-3)] transition-colors hover:bg-[var(--bg-3)] hover:text-[var(--fg-0)]"
+                    title="Create label"
+                  >
+                    <Plus size={14} strokeWidth={2.5} />
+                  </button>
+                </div>
 
-            {currentAccountLabels.map((label) => {
-              const unread = labelCounts[label.id] || 0;
-              return (
-                <ContextMenu key={label.id}>
-                  <ContextMenuTrigger className="block w-full">
-                    <button
-                      onClick={() => handleLabelClick(currentAccount, label.id)}
-                      className={cn(
-                        "flex w-full items-center justify-between rounded-[6px] border-l-2 px-2.5 py-1.5 text-[13px] transition-colors",
-                        activeLabelId === label.id
-                          ? "border-[var(--ryze-accent)] bg-[var(--bg-3)] font-medium text-[var(--fg-0)]"
-                          : "border-transparent text-[var(--fg-1)] hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]",
-                      )}
-                    >
-                      <div className="flex items-center gap-3 truncate">
-                        <div
-                          className="h-2 w-2 shrink-0 rounded-full"
-                          style={{ backgroundColor: label.color }}
-                        />
-                        <span className="truncate">{label.name}</span>
-                      </div>
-                      {unread > 0 && (
-                        <span
+                {currentAccountLabels.map((label) => {
+                  const unread = labelCounts[label.id] || 0;
+                  return (
+                    <ContextMenu key={label.id}>
+                      <ContextMenuTrigger className="block w-full">
+                        <button
+                          onClick={() => handleLabelClick(currentAccount, label.id)}
                           className={cn(
-                            "ml-2 shrink-0 font-mono-jetbrains text-[10.5px] font-medium",
+                            "flex w-full items-center justify-between rounded-[6px] border-l-2 px-2.5 py-1.5 text-[13px] transition-colors",
                             activeLabelId === label.id
-                              ? "text-[var(--fg-1)]"
-                              : "text-[var(--fg-2)]",
+                              ? "border-[var(--ryze-accent)] bg-[var(--bg-3)] font-medium text-[var(--fg-0)]"
+                              : "border-transparent text-[var(--fg-1)] hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]",
                           )}
                         >
-                          {unread}
-                        </span>
-                      )}
-                    </button>
-                  </ContextMenuTrigger>
-                  <ContextMenuContent>
-                    <ContextMenuItem
-                      onSelect={() => {
-                        openPrompt("Rename Label", label.name, async (newName) => {
-                          if (newName && window.electronAPI?.renameLabel) {
-                            try {
-                              await window.electronAPI.renameLabel({
-                                accountId: currentAccount.id,
-                                labelId: label.id,
-                                name: newName,
-                              });
-                              onRefresh();
-                            } catch (e) {}
-                          }
-                        });
-                      }}
-                    >
-                      Rename Label
-                    </ContextMenuItem>
-                    <ContextMenuSeparator />
-                    <ContextMenuItem
-                      onSelect={() => {
-                        openConfirm(
-                          "Delete Label",
-                          `Delete label "${label.name}"?`,
-                          true,
-                          () => {
-                            onDeleteLabel(label);
-                          },
-                        );
-                      }}
-                      className="text-[var(--danger-token)] focus:text-[var(--danger-token)]"
-                    >
-                      Delete Label
-                    </ContextMenuItem>
-                  </ContextMenuContent>
-                </ContextMenu>
-              );
-            })}
-          </div>
+                          <div className="flex items-center gap-3 truncate">
+                            <div
+                              className="h-2 w-2 shrink-0 rounded-full"
+                              style={{ backgroundColor: label.color }}
+                            />
+                            <span className="truncate">{label.name}</span>
+                          </div>
+                          {unread > 0 && (
+                            <span
+                              className={cn(
+                                "ml-2 shrink-0 font-mono-jetbrains text-[10.5px] font-medium",
+                                activeLabelId === label.id
+                                  ? "text-[var(--fg-1)]"
+                                  : "text-[var(--fg-2)]",
+                              )}
+                            >
+                              {unread}
+                            </span>
+                          )}
+                        </button>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent>
+                        <ContextMenuItem
+                          onSelect={() => {
+                            openPrompt("Rename Label", label.name, async (newName) => {
+                              if (newName && window.electronAPI?.renameLabel) {
+                                try {
+                                  await window.electronAPI.renameLabel({
+                                    accountId: currentAccount.id,
+                                    labelId: label.id,
+                                    name: newName,
+                                  });
+                                  onRefresh();
+                                } catch (e) {}
+                              }
+                            });
+                          }}
+                        >
+                          Rename Label
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          onSelect={() => {
+                            openConfirm(
+                              "Delete Label",
+                              `Delete label "${label.name}"?`,
+                              true,
+                              () => {
+                                onDeleteLabel(label);
+                              },
+                            );
+                          }}
+                          className="text-[var(--danger-token)] focus:text-[var(--danger-token)]"
+                        >
+                          Delete Label
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
 
-        <div className="flex items-center gap-1 border-t border-[var(--border-subtle)] p-2">
+        <div className={cn("flex border-t border-[var(--border-subtle)] p-2", isCollapsed ? "flex-col gap-2" : "gap-1")}>
           <button
             onClick={onRefresh}
-            className="flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-ryze-sm)] py-2 text-[13px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
+            title={isCollapsed ? "Sync" : undefined}
+            className={cn(
+              "flex flex-1 items-center rounded-[var(--radius-ryze-sm)] py-2 text-[13px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]",
+              isCollapsed ? "justify-center" : "justify-center gap-2"
+            )}
           >
             <RefreshCw size={15} />
-            Sync
+            {!isCollapsed && "Sync"}
           </button>
           <button
             onClick={onOpenSettings}
-            className="flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-ryze-sm)] py-2 text-[13px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
+            title={isCollapsed ? "Settings" : undefined}
+            className={cn(
+              "flex flex-1 items-center rounded-[var(--radius-ryze-sm)] py-2 text-[13px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]",
+              isCollapsed ? "justify-center" : "justify-center gap-2"
+            )}
           >
             <Settings size={15} />
-            Settings
+            {!isCollapsed && "Settings"}
           </button>
         </div>
       </div>
+
 
       {/* --- NATIVE REACT MODAL OVERLAY --- */}
       {dialog.isOpen && (

@@ -481,6 +481,7 @@ export function EmailClient() {
   const mailFoldersRef = React.useRef<MailFolder[]>([]);
   const fetchGenerationRef = React.useRef(0);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [isCalendarExpanded, setIsCalendarExpanded] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
   const [hasLoadedCalendar, setHasLoadedCalendar] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -3060,7 +3061,9 @@ export function EmailClient() {
       <div
         className="grid min-h-0 overflow-hidden"
         style={{
-          gridTemplateColumns: "var(--sidebar-w) var(--list-w) minmax(0,1fr)",
+          gridTemplateColumns: isCalendarExpanded 
+            ? "72px var(--list-w) minmax(0,1fr) 48px 340px" 
+            : "var(--sidebar-w) var(--list-w) minmax(0,1fr)",
         }}
       >
         <motion.div
@@ -3070,7 +3073,7 @@ export function EmailClient() {
           className="h-full min-h-0"
         >
           <Sidebar
-            isCollapsed={isSidebarCollapsed}
+            isCollapsed={isSidebarCollapsed || isCalendarExpanded}
             onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
             activeFolder={activeFolder}
             onFolderSelect={handleFolderSelect}
@@ -3186,10 +3189,15 @@ export function EmailClient() {
         </motion.div>
       </div>
       <CalendarSidebar
-        isOpen={isCalendarOpen}
-        onClose={() => setIsCalendarOpen(false)}
+        isOpen={isCalendarOpen || isCalendarExpanded}
+        onClose={() => {
+          setIsCalendarOpen(false);
+          setIsCalendarExpanded(false);
+        }}
+        onToggleExpand={() => setIsCalendarExpanded(!isCalendarExpanded)}
+        isExpanded={isCalendarExpanded}
         events={calendarEvents}
-        isLoading={isCalendarOpen && !hasLoadedCalendar}
+        isLoading={(isCalendarOpen || isCalendarExpanded) && !hasLoadedCalendar}
         lastSyncedAt={lastSyncedAt}
         mailboxCount={emails.length}
         draftCount={drafts.length}
