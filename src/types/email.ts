@@ -102,3 +102,16 @@ export interface Account {
   provider?: "local" | "microsoft" | "google" | "imap";
   externalId?: string;
 }
+
+export interface DetectedEvent {
+  title: string;
+  start: string; // ISO string
+  end: string;   // ISO string
+}
+
+export interface AiExtraction {
+  messageId: string;
+  type: 'event' | 'task';
+  content: string; // JSON stringified DetectedEvent or Task
+  createdAt: string;
+}

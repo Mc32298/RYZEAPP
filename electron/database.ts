@@ -95,6 +95,15 @@ CREATE TABLE IF NOT EXISTS folder_sync_state (
 
 CREATE INDEX IF NOT EXISTS idx_folder_sync_state_account
 ON folder_sync_state(accountId);
+
+  CREATE TABLE IF NOT EXISTS ai_extractions (
+    messageId  TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    createdAt  TEXT NOT NULL,
+    PRIMARY KEY (messageId, type),
+    FOREIGN KEY(messageId) REFERENCES emails(id) ON DELETE CASCADE
+  );
 `);
 
 const ALLOWED_MIGRATION_TABLES = new Set([
@@ -103,6 +112,7 @@ const ALLOWED_MIGRATION_TABLES = new Set([
   "labels",
   "email_labels",
   "folder_sync_state",
+  "ai_extractions",
 ]);
 const SAFE_IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const SAFE_COLUMN_DEF_RE = /^[A-Z]+(\s+DEFAULT\s+('[^']*'|\d+))?$/i;
