@@ -40,6 +40,22 @@ type AiGenerateReplyPayload = AiSummarizeEmailPayload & {
   tone?: string;
 };
 
+type AiSuggestedAction = {
+  actionId: "reply" | "remind_3d" | "remind_7d";
+  label: string;
+  reason: string;
+  confidence: number;
+  requiresConfirmation: boolean;
+};
+
+type AiSummaryResult = {
+  summary: string;
+  keyPoints?: string[];
+  suggestedActions?: AiSuggestedAction[];
+  confidence?: number;
+  uncertainty?: string;
+};
+
 type AiProvider = "gemini";
 
 type CreateLabelPayload = {
@@ -207,7 +223,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       senderEmail: optionalString(payload.senderEmail, "senderEmail", 512),
       body: optionalString(payload.body, "body", 500_000),
       preview: optionalString(payload.preview, "preview", 5000),
-    });
+    }) as Promise<AiSummaryResult>;
   },
   generateReplyWithAi: (payload: AiGenerateReplyPayload) => {
     return ipcRenderer.invoke("ai:generate-reply", {

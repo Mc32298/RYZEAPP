@@ -1,1 +1,307 @@
-"use strict";const c=require("electron");function d(e){const o=Object.create(null,{[Symbol.toStringTag]:{value:"Module"}});if(e){for(const a in e)if(a!=="default"){const i=Object.getOwnPropertyDescriptor(e,a);Object.defineProperty(o,a,i.get?i:{enumerable:!0,get:()=>e[a]})}}return o.default=e,Object.freeze(o)}const s=d(c),l=s.default??s,{contextBridge:m,ipcRenderer:n}=l;function t(e,o,a=4096){if(typeof e!="string")throw new TypeError(`${o} must be a string`);const i=e.trim();if(!i)throw new TypeError(`${o} is required`);if(i.length>a)throw new TypeError(`${o} is too long`);return i}function r(e,o,a=4096){if(e==null)return"";if(typeof e!="string")throw new TypeError(`${o} must be a string`);if(e.length>a)throw new TypeError(`${o} is too long`);return e}function u(e,o){if(e==null||e==="")return"#C9A84C";if(typeof e!="string")throw new TypeError(`${o} must be a string`);const a=e.trim();if(!/^#[0-9A-Fa-f]{6}$/.test(a))throw new TypeError(`${o} must be a valid hex color`);return a}function I(e){if(!Array.isArray(e))throw new TypeError("drafts must be an array");return e.slice(0,20).map((o,a)=>{const i=o&&typeof o=="object"?o:{};return{id:r(i.id,`drafts[${a}].id`,128),to:r(i.to,`drafts[${a}].to`,4096),cc:r(i.cc,`drafts[${a}].cc`,4096),subject:r(i.subject,`drafts[${a}].subject`,512),body:r(i.body,`drafts[${a}].body`,5e5),isMinimized:!!i.isMinimized,isFullscreen:!!i.isFullscreen,scheduledSendAt:r(i.scheduledSendAt,`drafts[${a}].scheduledSendAt`,64),aiTone:r(i.aiTone,`drafts[${a}].aiTone`,32),aiHint:r(i.aiHint,`drafts[${a}].aiHint`,2048)}})}function v(e){const o=e&&typeof e=="object"?e:{};return{aiProvider:r(o.aiProvider,"aiProvider",32).trim()==="ollama"?"ollama":"gemini",geminiModel:r(o.geminiModel,"geminiModel",64).trim()||"gemini-2.5-flash",ollamaBaseUrl:r(o.ollamaBaseUrl,"ollamaBaseUrl",512).trim()||"http://127.0.0.1:11434",ollamaModel:r(o.ollamaModel,"ollamaModel",128).trim()||"llama3.2"}}m.exposeInMainWorld("electronAPI",{minimizeWindow:()=>n.send("window-minimize"),maximizeWindow:()=>n.send("window-maximize"),closeWindow:()=>n.send("window-close"),getAppVersion:()=>n.invoke("app:get-version"),checkUpdates:()=>n.invoke("updater:check"),startUpdateDownload:()=>n.invoke("updater:start-download"),installUpdate:()=>n.invoke("updater:install"),onUpdateAvailable:e=>{n.on("updater:available",(o,a)=>e(a))},onUpdateDownloaded:e=>{n.on("updater:downloaded",()=>e())},onUpdateError:e=>{n.on("updater:error",(o,a)=>e(a))},removeUpdaterListeners:()=>{n.removeAllListeners("updater:available"),n.removeAllListeners("updater:downloaded"),n.removeAllListeners("updater:error")},getDrafts:()=>n.invoke("system:get-drafts"),saveDrafts:e=>n.send("system:save-drafts",I(e)),onDraftsSaveFailed:e=>{n.on("drafts:save-failed",(o,a)=>e(a))},removeDraftsListeners:()=>{n.removeAllListeners("drafts:save-failed")},getStorageUsage:()=>n.invoke("system:get-storage-usage"),exportEncryptedBackup:()=>n.invoke("system:export-backup"),importEncryptedBackup:()=>n.invoke("system:import-backup"),getAccountHealth:()=>n.invoke("accounts:get-health"),updateBackendSettings:e=>n.send("system:update-settings",v(e)),summarizeEmailWithAi:e=>n.invoke("ai:summarize-email",{subject:r(e.subject,"subject",512),senderName:r(e.senderName,"senderName",256),senderEmail:r(e.senderEmail,"senderEmail",512),body:r(e.body,"body",5e5),preview:r(e.preview,"preview",5e3)}),generateReplyWithAi:e=>n.invoke("ai:generate-reply",{subject:r(e.subject,"subject",512),senderName:r(e.senderName,"senderName",256),senderEmail:r(e.senderEmail,"senderEmail",512),body:r(e.body,"body",5e5),preview:r(e.preview,"preview",5e3),tone:r(e.tone,"tone",32)}),getAiProviderKeyStatus:e=>n.invoke("ai:get-provider-key-status",{provider:t(e,"provider",32)}),setAiProviderKey:(e,o)=>n.invoke("ai:set-provider-key",{provider:t(e,"provider",32),apiKey:t(o,"apiKey",8192)}),deleteAiProviderKey:e=>n.invoke("ai:delete-provider-key",{provider:t(e,"provider",32)}),syncMail:e=>n.invoke("mail:sync",{accountId:t(e,"accountId",256)}),getEmailBody:(e,o)=>n.invoke("mail:get-body",{accountId:t(e,"accountId",256),messageId:t(o,"messageId",2048)}),sendEmail:e=>n.invoke("mail:send",{accountId:t(e.accountId,"accountId",256),to:t(e.to,"to",4096),cc:r(e.cc,"cc",4096),subject:r(e.subject,"subject",512),body:r(e.body,"body",5e5)}),replyEmail:(e,o,a)=>n.invoke("mail:reply",{accountId:t(e,"accountId",256),messageId:t(o,"messageId",2048),comment:r(a,"comment",5e5)}),markEmailAsRead:(e,o)=>n.invoke("mail:mark-read",{accountId:t(e,"accountId",256),messageId:t(o,"messageId",2048)}),markEmailAsUnread:(e,o)=>n.invoke("mail:mark-unread",{accountId:t(e,"accountId",256),messageId:t(o,"messageId",2048)}),toggleEmailStar:(e,o,a)=>n.invoke("mail:toggle-star",{accountId:t(e,"accountId",256),messageId:t(o,"messageId",2048),isStarred:a}),moveEmail:(e,o,a)=>n.invoke("mail:move",{accountId:t(e,"accountId",256),messageId:t(o,"messageId",2048),destination:t(a,"destination",64)}),snoozeEmail:e=>n.invoke("mail:snooze",{accountId:t(e.accountId,"accountId",256),messageId:t(e.messageId,"messageId",2048),snoozedUntil:t(e.snoozedUntil,"snoozedUntil",64)}),clearEmailSnooze:(e,o)=>n.invoke("mail:clear-snooze",{accountId:t(e,"accountId",256),messageId:t(o,"messageId",2048)}),connectMicrosoftAccount:()=>n.invoke("microsoft-oauth:connect"),connectGoogleAccount:()=>n.invoke("google-oauth:connect"),connectImapAccount:e=>n.invoke("imap-account:connect",{email:t(e.email,"email",320),displayName:t(e.displayName,"displayName",128),host:t(e.host,"host",253),port:e.port,secure:e.secure,username:t(e.username,"username",320),password:t(e.password,"password",8192)}),deleteAccount:e=>n.invoke("account:delete",{accountId:t(e,"accountId",256)}),createFolder:(e,o)=>n.invoke("folder:create",{accountId:t(e,"accountId",256),displayName:t(o,"displayName",64)}),renameFolder:(e,o,a)=>n.invoke("folder:rename",{accountId:t(e,"accountId",256),folderId:t(o,"folderId",2048),displayName:t(a,"displayName",64)}),deleteFolder:(e,o)=>n.invoke("folder:delete",{accountId:t(e,"accountId",256),folderId:t(o,"folderId",2048)}),emptyFolder:(e,o)=>n.invoke("folder:empty",{accountId:t(e,"accountId",256),folderId:t(o,"folderId",2048)}),setFolderIcon:(e,o,a)=>n.invoke("folder:set-icon",{accountId:t(e,"accountId",256),folderId:t(o,"folderId",2048),icon:t(a,"icon",64)}),getLabels:e=>n.invoke("labels:list",{accountId:t(e,"accountId",256)}),createLabel:e=>n.invoke("labels:create",{accountId:t(e.accountId,"accountId",256),name:t(e.name,"name",64),color:u(e.color,"color")}),renameLabel:e=>n.invoke("labels:rename",{accountId:t(e.accountId,"accountId",256),labelId:t(e.labelId,"labelId",128),name:t(e.name,"name",64)}),deleteLabel:(e,o)=>n.invoke("labels:delete",{accountId:t(e,"accountId",256),labelId:t(o,"labelId",128)}),assignLabelToEmail:e=>n.invoke("labels:assign-email",{accountId:t(e.accountId,"accountId",256),messageId:t(e.messageId,"messageId",2048),labelId:t(e.labelId,"labelId",128)}),removeLabelFromEmail:e=>n.invoke("labels:remove-email",{accountId:t(e.accountId,"accountId",256),messageId:t(e.messageId,"messageId",2048),labelId:t(e.labelId,"labelId",128)}),getAllLocalEmails:()=>n.invoke("mail:getAllLocal"),syncMicrosoftFolders:(e,o)=>n.invoke("microsoft-mail:syncFolders",{accountId:t(e,"accountId",256),folderIds:o}),downloadMicrosoftEmailAttachment:(e,o,a,i)=>n.invoke("microsoft-mail:download-attachment",{accountId:t(e,"accountId",256),messageId:t(o,"messageId",2048),attachmentId:t(a,"attachmentId",2048),filename:t(i,"filename",1024)}),getMicrosoftCalendarEvents:e=>n.invoke("microsoft-calendar:get-events",{accountId:t(e,"accountId",256)})});
+"use strict";
+const electron = require("electron");
+function _interopNamespaceDefault(e) {
+  const n = Object.create(null, { [Symbol.toStringTag]: { value: "Module" } });
+  if (e) {
+    for (const k in e) {
+      if (k !== "default") {
+        const d = Object.getOwnPropertyDescriptor(e, k);
+        Object.defineProperty(n, k, d.get ? d : {
+          enumerable: true,
+          get: () => e[k]
+        });
+      }
+    }
+  }
+  n.default = e;
+  return Object.freeze(n);
+}
+const electron__namespace = /* @__PURE__ */ _interopNamespaceDefault(electron);
+const electronApi = electron__namespace.default ?? electron__namespace;
+const { contextBridge, ipcRenderer } = electronApi;
+function assertString(value, fieldName, maxLength = 4096) {
+  if (typeof value !== "string") {
+    throw new TypeError(`${fieldName} must be a string`);
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new TypeError(`${fieldName} is required`);
+  }
+  if (trimmed.length > maxLength) {
+    throw new TypeError(`${fieldName} is too long`);
+  }
+  return trimmed;
+}
+function optionalString(value, fieldName, maxLength = 4096) {
+  if (value === void 0 || value === null) {
+    return "";
+  }
+  if (typeof value !== "string") {
+    throw new TypeError(`${fieldName} must be a string`);
+  }
+  if (value.length > maxLength) {
+    throw new TypeError(`${fieldName} is too long`);
+  }
+  return value;
+}
+function optionalHexColor(value, fieldName) {
+  if (value === void 0 || value === null || value === "") {
+    return "#C9A84C";
+  }
+  if (typeof value !== "string") {
+    throw new TypeError(`${fieldName} must be a string`);
+  }
+  const trimmed = value.trim();
+  if (!/^#[0-9A-Fa-f]{6}$/.test(trimmed)) {
+    throw new TypeError(`${fieldName} must be a valid hex color`);
+  }
+  return trimmed;
+}
+function sanitizeDrafts(drafts) {
+  if (!Array.isArray(drafts)) {
+    throw new TypeError("drafts must be an array");
+  }
+  return drafts.slice(0, 20).map((draft, index) => {
+    const value = draft && typeof draft === "object" ? draft : {};
+    return {
+      id: optionalString(value.id, `drafts[${index}].id`, 128),
+      to: optionalString(value.to, `drafts[${index}].to`, 4096),
+      cc: optionalString(value.cc, `drafts[${index}].cc`, 4096),
+      subject: optionalString(value.subject, `drafts[${index}].subject`, 512),
+      body: optionalString(value.body, `drafts[${index}].body`, 5e5),
+      isMinimized: Boolean(value.isMinimized),
+      isFullscreen: Boolean(value.isFullscreen),
+      scheduledSendAt: optionalString(
+        value.scheduledSendAt,
+        `drafts[${index}].scheduledSendAt`,
+        64
+      ),
+      aiTone: optionalString(value.aiTone, `drafts[${index}].aiTone`, 32),
+      aiHint: optionalString(value.aiHint, `drafts[${index}].aiHint`, 2048)
+    };
+  });
+}
+function sanitizeBackendSettings(settings) {
+  const value = settings && typeof settings === "object" ? settings : {};
+  const aiProvider = optionalString(value.aiProvider, "aiProvider", 32).trim();
+  return {
+    aiProvider: aiProvider === "ollama" ? "ollama" : "gemini",
+    geminiModel: optionalString(value.geminiModel, "geminiModel", 64).trim() || "gemini-2.5-flash",
+    ollamaBaseUrl: optionalString(value.ollamaBaseUrl, "ollamaBaseUrl", 512).trim() || "http://127.0.0.1:11434",
+    ollamaModel: optionalString(value.ollamaModel, "ollamaModel", 128).trim() || "llama3.2"
+  };
+}
+contextBridge.exposeInMainWorld("electronAPI", {
+  minimizeWindow: () => ipcRenderer.send("window-minimize"),
+  maximizeWindow: () => ipcRenderer.send("window-maximize"),
+  closeWindow: () => ipcRenderer.send("window-close"),
+  // --- APP INFO ---
+  getAppVersion: () => ipcRenderer.invoke("app:get-version"),
+  // --- AUTO UPDATER ---
+  checkUpdates: () => ipcRenderer.invoke("updater:check"),
+  startUpdateDownload: () => ipcRenderer.invoke("updater:start-download"),
+  installUpdate: () => ipcRenderer.invoke("updater:install"),
+  onUpdateAvailable: (callback) => {
+    ipcRenderer.on("updater:available", (_event, version) => callback(version));
+  },
+  onUpdateDownloaded: (callback) => {
+    ipcRenderer.on("updater:downloaded", () => callback());
+  },
+  onUpdateError: (callback) => {
+    ipcRenderer.on("updater:error", (_event, message) => callback(message));
+  },
+  removeUpdaterListeners: () => {
+    ipcRenderer.removeAllListeners("updater:available");
+    ipcRenderer.removeAllListeners("updater:downloaded");
+    ipcRenderer.removeAllListeners("updater:error");
+  },
+  // --- SYSTEM & STORAGE ---
+  getDrafts: () => ipcRenderer.invoke("system:get-drafts"),
+  saveDrafts: (drafts) => ipcRenderer.send("system:save-drafts", sanitizeDrafts(drafts)),
+  onDraftsSaveFailed: (callback) => {
+    ipcRenderer.on("drafts:save-failed", (_event, message) => callback(message));
+  },
+  removeDraftsListeners: () => {
+    ipcRenderer.removeAllListeners("drafts:save-failed");
+  },
+  getStorageUsage: () => ipcRenderer.invoke("system:get-storage-usage"),
+  exportEncryptedBackup: () => ipcRenderer.invoke("system:export-backup"),
+  importEncryptedBackup: () => ipcRenderer.invoke("system:import-backup"),
+  getAccountHealth: () => ipcRenderer.invoke("accounts:get-health"),
+  updateBackendSettings: (settings) => ipcRenderer.send("system:update-settings", sanitizeBackendSettings(settings)),
+  // --- AI FEATURES ---
+  summarizeEmailWithAi: (payload) => {
+    return ipcRenderer.invoke("ai:summarize-email", {
+      subject: optionalString(payload.subject, "subject", 512),
+      senderName: optionalString(payload.senderName, "senderName", 256),
+      senderEmail: optionalString(payload.senderEmail, "senderEmail", 512),
+      body: optionalString(payload.body, "body", 5e5),
+      preview: optionalString(payload.preview, "preview", 5e3)
+    });
+  },
+  generateReplyWithAi: (payload) => {
+    return ipcRenderer.invoke("ai:generate-reply", {
+      subject: optionalString(payload.subject, "subject", 512),
+      senderName: optionalString(payload.senderName, "senderName", 256),
+      senderEmail: optionalString(payload.senderEmail, "senderEmail", 512),
+      body: optionalString(payload.body, "body", 5e5),
+      preview: optionalString(payload.preview, "preview", 5e3),
+      tone: optionalString(payload.tone, "tone", 32)
+    });
+  },
+  getAiProviderKeyStatus: (provider) => ipcRenderer.invoke("ai:get-provider-key-status", {
+    provider: assertString(provider, "provider", 32)
+  }),
+  setAiProviderKey: (provider, apiKey) => ipcRenderer.invoke("ai:set-provider-key", {
+    provider: assertString(provider, "provider", 32),
+    apiKey: assertString(apiKey, "apiKey", 8192)
+  }),
+  deleteAiProviderKey: (provider) => ipcRenderer.invoke("ai:delete-provider-key", {
+    provider: assertString(provider, "provider", 32)
+  }),
+  getAiExtractions: (messageId, bodyText) => ipcRenderer.invoke(
+    "get-ai-extractions",
+    assertString(messageId, "messageId", 2048),
+    assertString(bodyText, "bodyText", 1e6)
+  ),
+  // --- GENERIC MAIL OPERATIONS ---
+  syncMail: (accountId) => ipcRenderer.invoke("mail:sync", { accountId: assertString(accountId, "accountId", 256) }),
+  getEmailBody: (accountId, messageId) => ipcRenderer.invoke("mail:get-body", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048)
+  }),
+  sendEmail: (payload) => {
+    return ipcRenderer.invoke("mail:send", {
+      accountId: assertString(payload.accountId, "accountId", 256),
+      to: assertString(payload.to, "to", 4096),
+      cc: optionalString(payload.cc, "cc", 4096),
+      subject: optionalString(payload.subject, "subject", 512),
+      body: optionalString(payload.body, "body", 5e5)
+    });
+  },
+  replyEmail: (accountId, messageId, comment) => ipcRenderer.invoke("mail:reply", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048),
+    comment: optionalString(comment, "comment", 5e5)
+  }),
+  markEmailAsRead: (accountId, messageId) => ipcRenderer.invoke("mail:mark-read", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048)
+  }),
+  markEmailAsUnread: (accountId, messageId) => ipcRenderer.invoke("mail:mark-unread", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048)
+  }),
+  toggleEmailStar: (accountId, messageId, isStarred) => ipcRenderer.invoke("mail:toggle-star", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048),
+    isStarred
+  }),
+  moveEmail: (accountId, messageId, destination) => ipcRenderer.invoke("mail:move", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048),
+    destination: assertString(destination, "destination", 2048)
+  }),
+  snoozeEmail: (payload) => {
+    return ipcRenderer.invoke("mail:snooze", {
+      accountId: assertString(payload.accountId, "accountId", 256),
+      messageId: assertString(payload.messageId, "messageId", 2048),
+      snoozedUntil: assertString(payload.snoozedUntil, "snoozedUntil", 64)
+    });
+  },
+  clearEmailSnooze: (accountId, messageId) => ipcRenderer.invoke("mail:clear-snooze", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048)
+  }),
+  // --- ACCOUNT MANAGEMENT ---
+  connectMicrosoftAccount: () => ipcRenderer.invoke("microsoft-oauth:connect"),
+  connectGoogleAccount: () => ipcRenderer.invoke("google-oauth:connect"),
+  connectImapAccount: (payload) => {
+    return ipcRenderer.invoke("imap-account:connect", {
+      email: assertString(payload.email, "email", 320),
+      displayName: assertString(payload.displayName, "displayName", 128),
+      host: assertString(payload.host, "host", 253),
+      port: payload.port,
+      secure: payload.secure,
+      username: assertString(payload.username, "username", 320),
+      password: assertString(payload.password, "password", 8192)
+    });
+  },
+  deleteAccount: (accountId) => ipcRenderer.invoke("account:delete", {
+    accountId: assertString(accountId, "accountId", 256)
+  }),
+  // --- FOLDER MANAGEMENT ---
+  createFolder: (accountId, displayName) => ipcRenderer.invoke("folder:create", {
+    accountId: assertString(accountId, "accountId", 256),
+    displayName: assertString(displayName, "displayName", 64)
+  }),
+  renameFolder: (accountId, folderId, displayName) => ipcRenderer.invoke("folder:rename", {
+    accountId: assertString(accountId, "accountId", 256),
+    folderId: assertString(folderId, "folderId", 2048),
+    displayName: assertString(displayName, "displayName", 64)
+  }),
+  deleteFolder: (accountId, folderId) => ipcRenderer.invoke("folder:delete", {
+    accountId: assertString(accountId, "accountId", 256),
+    folderId: assertString(folderId, "folderId", 2048)
+  }),
+  emptyFolder: (accountId, folderId) => ipcRenderer.invoke("folder:empty", {
+    accountId: assertString(accountId, "accountId", 256),
+    folderId: assertString(folderId, "folderId", 2048)
+  }),
+  setFolderIcon: (accountId, folderId, icon) => ipcRenderer.invoke("folder:set-icon", {
+    accountId: assertString(accountId, "accountId", 256),
+    folderId: assertString(folderId, "folderId", 2048),
+    icon: assertString(icon, "icon", 64)
+  }),
+  // --- LABEL MANAGEMENT ---
+  getLabels: (accountId) => ipcRenderer.invoke("labels:list", {
+    accountId: assertString(accountId, "accountId", 256)
+  }),
+  createLabel: (payload) => {
+    return ipcRenderer.invoke("labels:create", {
+      accountId: assertString(payload.accountId, "accountId", 256),
+      name: assertString(payload.name, "name", 64),
+      color: optionalHexColor(payload.color, "color")
+    });
+  },
+  renameLabel: (payload) => {
+    return ipcRenderer.invoke("labels:rename", {
+      accountId: assertString(payload.accountId, "accountId", 256),
+      labelId: assertString(payload.labelId, "labelId", 128),
+      name: assertString(payload.name, "name", 64)
+    });
+  },
+  deleteLabel: (accountId, labelId) => ipcRenderer.invoke("labels:delete", {
+    accountId: assertString(accountId, "accountId", 256),
+    labelId: assertString(labelId, "labelId", 128)
+  }),
+  assignLabelToEmail: (payload) => {
+    return ipcRenderer.invoke("labels:assign-email", {
+      accountId: assertString(payload.accountId, "accountId", 256),
+      messageId: assertString(payload.messageId, "messageId", 2048),
+      labelId: assertString(payload.labelId, "labelId", 128)
+    });
+  },
+  removeLabelFromEmail: (payload) => {
+    return ipcRenderer.invoke("labels:remove-email", {
+      accountId: assertString(payload.accountId, "accountId", 256),
+      messageId: assertString(payload.messageId, "messageId", 2048),
+      labelId: assertString(payload.labelId, "labelId", 128)
+    });
+  },
+  // --- LEGACY / SPECIFIC (To be pruned after UI update) ---
+  getAllLocalEmails: () => ipcRenderer.invoke("mail:getAllLocal"),
+  syncMicrosoftFolders: (accountId, folderIds) => ipcRenderer.invoke("microsoft-mail:syncFolders", {
+    accountId: assertString(accountId, "accountId", 256),
+    folderIds
+  }),
+  downloadMicrosoftEmailAttachment: (accountId, messageId, attachmentId, filename) => ipcRenderer.invoke("microsoft-mail:download-attachment", {
+    accountId: assertString(accountId, "accountId", 256),
+    messageId: assertString(messageId, "messageId", 2048),
+    attachmentId: assertString(attachmentId, "attachmentId", 2048),
+    filename: assertString(filename, "filename", 1024)
+  }),
+  getMicrosoftCalendarEvents: (accountId) => ipcRenderer.invoke("microsoft-calendar:get-events", {
+    accountId: assertString(accountId, "accountId", 256)
+  })
+});

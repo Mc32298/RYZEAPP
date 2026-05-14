@@ -1,11 +1,24 @@
 import { app, safeStorage } from "electron";
 import * as path from "path";
 import * as fs from "fs";
+import * as os from "os";
 import { BackendSettings, StoredAiProviderKeys, AiProvider } from "./types";
 
-const settingsFilePath = path.join(app.getPath("userData"), "ryze-settings.json");
+function resolveUserDataPath() {
+  try {
+    if (app?.getPath) {
+      return app.getPath("userData");
+    }
+  } catch {
+    // Vitest/non-electron runtime fallback.
+  }
+
+  return path.join(os.tmpdir(), "ryze-mail-test-data");
+}
+
+const settingsFilePath = path.join(resolveUserDataPath(), "ryze-settings.json");
 const aiProviderKeysFilePath = path.join(
-  app.getPath("userData"),
+  resolveUserDataPath(),
   "ai-provider-keys.json",
 );
 

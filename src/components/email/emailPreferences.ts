@@ -62,7 +62,7 @@ export interface EmailTheme {
 
 export const DEFAULT_EMAIL_SETTINGS: EmailSettings = {
   signature: '',
-  themeMode: 'darkBlue',
+  themeMode: 'appleLight',
   density: 'comfortable',
   showPreviewText: true,
   showAvatars: true,

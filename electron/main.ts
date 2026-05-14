@@ -204,6 +204,14 @@ const activeFullSyncs = new Map<string, Promise<{ success: boolean }>>();
 const microsoftProvider = new MicrosoftProvider();
 const gmailProvider = new GmailProvider();
 
+function broadcastUpdaterEvent(channel: "updater:available" | "updater:downloaded" | "updater:error", payload?: string) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(channel, payload);
+    }
+  }
+}
+
 function getProviderForAccount(accountId: string): MailProvider {
   if (getAccountProviderKind(accountId) === "microsoft") return microsoftProvider;
   if (getAccountProviderKind(accountId) === "google") return gmailProvider;
@@ -935,12 +943,16 @@ ipcMain.handle("ai:summarize-email", async (_event, payload) => {
     "Analyze this email for the user.",
     "",
     "Return only valid JSON with this exact shape:",
-    '{"summary":"one concise paragraph","keyPoints":["point 1","point 2"],"suggestedActions":["action 1","action 2"]}',
+    '{"summary":"one concise paragraph","keyPoints":["point 1","point 2"],"suggestedActions":[{"actionId":"reply","label":"Draft a reply","reason":"what to say","confidence":0.0,"requiresConfirmation":false}],"confidence":0.0,"uncertainty":"optional short note"}',
     "",
     "Rules:",
     "- Keep summary concise.",
     "- keyPoints should capture the most important facts, questions, deadlines, amounts, or decisions.",
+    '- suggestedActions must use actionId from: "reply", "remind_3d", "remind_7d".',
     "- suggestedActions should be practical next steps for the user.",
+    "- suggestedActions max 3.",
+    "- confidence must be 0.0-1.0 and represents overall confidence.",
+    "- uncertainty should be empty when confidence is high; otherwise one short warning sentence.",
     "- Do not invent details.",
     "- Use empty arrays when there are no key points or actions.",
     "",
@@ -956,8 +968,8 @@ ipcMain.handle("ai:summarize-email", async (_event, payload) => {
     const ollamaBody = limitAiInput(plainBody, 4_000);
     const ollamaPrompt = [
       "Return only valid JSON.",
-      'Shape: {"summary":"short summary","keyPoints":["point"],"suggestedActions":["action"]}',
-      "Use max 3 keyPoints and max 2 suggestedActions.",
+      'Shape: {"summary":"short summary","keyPoints":["point"],"suggestedActions":[{"actionId":"reply","label":"Draft reply","reason":"why","confidence":0.0,"requiresConfirmation":false}],"confidence":0.0,"uncertainty":"optional"}',
+      "Use max 3 keyPoints and max 3 suggestedActions.",
       "Do not invent details.",
       "",
       `From: ${email.senderName} <${email.senderEmail}>`,
@@ -2562,6 +2574,28 @@ ipcMain.handle("mail:reply", async (_event, payload) => {
 });
 
 // =============================================================================
+// IPC HANDLERS — APP INFO & UPDATER
+// =============================================================================
+
+ipcMain.handle("app:get-version", () => app.getVersion());
+
+ipcMain.handle("updater:check", async () => {
+  if (!app.isPackaged) return { skipped: true, reason: "dev-build" };
+  return autoUpdater.checkForUpdates();
+});
+
+ipcMain.handle("updater:start-download", async () => {
+  if (!app.isPackaged) return { skipped: true, reason: "dev-build" };
+  return autoUpdater.downloadUpdate();
+});
+
+ipcMain.handle("updater:install", async () => {
+  if (!app.isPackaged) return { skipped: true, reason: "dev-build" };
+  autoUpdater.quitAndInstall();
+  return { success: true };
+});
+
+// =============================================================================
 // IPC HANDLERS — LABELS
 // =============================================================================
 
@@ -2656,6 +2690,19 @@ const CSP_DEV = [
 ].join("; ");
 
 app.whenReady().then(() => {
+  autoUpdater.on("update-available", (info) => {
+    const version = typeof info?.version === "string" ? info.version : "";
+    broadcastUpdaterEvent("updater:available", version);
+  });
+  autoUpdater.on("update-downloaded", () => {
+    broadcastUpdaterEvent("updater:downloaded");
+  });
+  autoUpdater.on("error", (error) => {
+    const message =
+      error instanceof Error ? error.message : String(error ?? "Updater error");
+    broadcastUpdaterEvent("updater:error", message);
+  });
+
   // Inject Content-Security-Policy on every response the renderer receives.
   // This covers both file:// (production) and http://localhost (dev).
   electron.session.defaultSession.webRequest.onHeadersReceived(

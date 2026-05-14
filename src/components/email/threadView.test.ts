@@ -117,6 +117,41 @@ describe("buildConversationThread", () => {
 
     expect(thread.messages.map((item) => item.id)).toEqual(["msg-a", "msg-b"]);
   });
+
+  it("does not merge fallback threads across different accounts", () => {
+    const selected = makeEmail("msg-a", {
+      accountId: "gmail-1",
+      conversationId: undefined,
+      subject: "Re: Product sync",
+      sender: {
+        name: "Ava",
+        email: "ava@test.dev",
+        initials: "A",
+        color: "#C9A84C",
+      },
+      to: ["mathias@test.dev"],
+    });
+    const otherAccountMatch = makeEmail("msg-b", {
+      accountId: "outlook-1",
+      conversationId: undefined,
+      subject: "Product sync",
+      sender: {
+        name: "Mathias",
+        email: "mathias@test.dev",
+        initials: "M",
+        color: "#A9793D",
+      },
+      to: ["ava@test.dev"],
+      timestamp: new Date("2026-05-01T09:00:00Z"),
+    });
+
+    const thread = buildConversationThread(selected, [
+      selected,
+      otherAccountMatch,
+    ]);
+
+    expect(thread.messages.map((item) => item.id)).toEqual(["msg-a"]);
+  });
 });
 
 describe("getDefaultExpandedMessageIds", () => {
@@ -289,6 +324,43 @@ describe("buildThreadListRows", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].threadCount).toBe(2);
     expect(rows[1].threadCount).toBe(1);
+  });
+
+  it("keeps fallback rows separated by account", () => {
+    const gmailRow = makeEmail("msg-a", {
+      accountId: "gmail-1",
+      conversationId: undefined,
+      subject: "Re: Product sync",
+      sender: {
+        name: "Ava",
+        email: "ava@test.dev",
+        initials: "A",
+        color: "#C9A84C",
+      },
+      to: ["mathias@test.dev"],
+      timestamp: new Date("2026-05-03T12:00:00Z"),
+    });
+    const outlookRow = makeEmail("msg-b", {
+      accountId: "outlook-1",
+      conversationId: undefined,
+      subject: "Product sync",
+      sender: {
+        name: "Mathias",
+        email: "mathias@test.dev",
+        initials: "M",
+        color: "#A9793D",
+      },
+      to: ["ava@test.dev"],
+      timestamp: new Date("2026-05-03T11:00:00Z"),
+    });
+
+    const rows = buildThreadListRows([gmailRow, outlookRow]);
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.latestMessage.accountId)).toEqual([
+      "gmail-1",
+      "outlook-1",
+    ]);
   });
 });
 

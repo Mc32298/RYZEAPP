@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { EmailThread, MailFolder } from "@/types/email";
 import {
   applyMovedEmailState,
+  getNextSelectedEmailIdAfterAction,
   getKnownFolderIdForAccount,
   getMailboxRefreshFolderIds,
 } from "./mailboxMutation";
@@ -85,5 +86,17 @@ describe("mailboxMutation", () => {
       "inbox-id",
       "trash-id",
     ]);
+  });
+
+  it("selects the next visible thread after acting on the current one", () => {
+    expect(
+      getNextSelectedEmailIdAfterAction(["msg-3", "msg-2", "msg-1"], "msg-2"),
+    ).toBe("msg-1");
+  });
+
+  it("falls back to previous thread when current is last", () => {
+    expect(
+      getNextSelectedEmailIdAfterAction(["msg-3", "msg-2", "msg-1"], "msg-1"),
+    ).toBe("msg-2");
   });
 });

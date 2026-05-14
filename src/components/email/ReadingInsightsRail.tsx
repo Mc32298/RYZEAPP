@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Loader2, Clock3, RefreshCw, Reply, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import type { EmailThread } from "@/types/email";
+import type { AiSuggestedAction } from "./aiSummary";
 import type {
   AiTone,
   ContactContextModel,
@@ -13,7 +14,11 @@ interface ReadingInsightsRailProps {
   email: EmailThread;
   aiSummary: string;
   aiKeyPoints: string[];
-  aiSuggestedActions: string[];
+  aiSuggestedActions: AiSuggestedAction[];
+  aiConfidence: number;
+  aiUncertainty: string;
+  canTrustAiActions: boolean;
+  isActionBusy: boolean;
   aiError: string;
   isAiSummarizing: boolean;
   isAiDrafting: boolean;
@@ -52,6 +57,10 @@ export function ReadingInsightsRail({
   aiSummary,
   aiKeyPoints,
   aiSuggestedActions,
+  aiConfidence,
+  aiUncertainty,
+  canTrustAiActions,
+  isActionBusy,
   aiError,
   isAiSummarizing,
   isAiDrafting,
@@ -65,13 +74,25 @@ export function ReadingInsightsRail({
   const keyPoints =
     aiKeyPoints.length > 0 ? aiKeyPoints : insights.primaryPanel.items;
   const visibleSignals = keyPoints.slice(0, 2);
-  const suggestedActions =
+  const suggestedActions: AiSuggestedAction[] =
     aiSuggestedActions.length > 0
       ? aiSuggestedActions
       : [
-          ...insights.actionItems.slice(0, 3),
-          insights.nextAction.label,
-        ].slice(0, 4);
+          ...insights.actionItems.slice(0, 2).map((label) => ({
+            actionId: "reply" as const,
+            label,
+            reason: "",
+            confidence: 0.55,
+            requiresConfirmation: false,
+          })),
+          {
+            actionId: "reply" as const,
+            label: insights.nextAction.label,
+            reason: "",
+            confidence: 0.55,
+            requiresConfirmation: false,
+          },
+        ].slice(0, 3);
   const actionButtons: Array<{
     id: "reply" | "remind_3d" | "remind_7d";
     label: string;
@@ -133,11 +154,7 @@ export function ReadingInsightsRail({
 
             <div className="flex-1 space-y-4 overflow-y-auto pt-4">
               <section className="space-y-3">
-                <p className="text-[13px] leading-6 text-[var(--fg-1)]">
-                  {aiError
-                    ? "Summary unavailable. Local insight cards are still active."
-                    : summaryText}
-                </p>
+                <SectionLabel>Next actions</SectionLabel>
                 <div className="grid grid-cols-1 gap-2">
                   {actionButtons.map((action) => {
                     const Icon = action.icon;
@@ -146,10 +163,11 @@ export function ReadingInsightsRail({
                         key={action.id}
                         type="button"
                         onClick={() => onNextAction(action.id)}
+                        disabled={!canTrustAiActions || isActionBusy}
                         className={
                           action.tone === "primary"
-                            ? "flex items-center gap-2 rounded-[6px] border border-[var(--ryze-accent)] bg-[var(--ryze-accent-soft)] px-3 py-2 text-left text-[12px] font-medium text-[var(--ryze-accent)] transition-colors hover:bg-[var(--bg-2)]"
-                            : "flex items-center gap-2 rounded-[6px] border border-[var(--border-subtle)] px-3 py-2 text-left text-[12px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]"
+                            ? "flex items-center gap-2 rounded-[6px] border border-[var(--ryze-accent)] bg-[var(--ryze-accent-soft)] px-3 py-2 text-left text-[12px] font-medium text-[var(--ryze-accent)] transition-colors hover:bg-[var(--bg-2)] disabled:cursor-not-allowed disabled:opacity-50"
+                            : "flex items-center gap-2 rounded-[6px] border border-[var(--border-subtle)] px-3 py-2 text-left text-[12px] text-[var(--fg-2)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)] disabled:cursor-not-allowed disabled:opacity-50"
                         }
                       >
                         <Icon size={13} />
@@ -158,6 +176,35 @@ export function ReadingInsightsRail({
                     );
                   })}
                 </div>
+                {suggestedActions.length > 0 && (
+                  <div className="space-y-1.5">
+                    {suggestedActions.slice(0, 2).map((item) => (
+                      <p
+                        key={`${item.actionId}-${item.label}`}
+                        className="rounded-[6px] border border-[var(--border-subtle)] px-2.5 py-2 text-[12px] leading-relaxed text-[var(--fg-2)]"
+                      >
+                        {item.label}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                <p className="font-mono-jetbrains text-[10px] text-[var(--fg-3)]">
+                  AI confidence: {Math.round(aiConfidence * 100)}%
+                </p>
+                {!canTrustAiActions && (
+                  <p className="rounded-[6px] border border-[var(--border-subtle)] bg-[var(--bg-2)] px-2.5 py-2 text-[11px] text-[var(--fg-2)]">
+                    {aiUncertainty || "Confidence is low. Review manually before acting."}
+                  </p>
+                )}
+              </section>
+
+              <section className="space-y-3 border-t border-[var(--border-subtle)] pt-4">
+                <SectionLabel>Summary</SectionLabel>
+                <p className="text-[13px] leading-6 text-[var(--fg-1)]">
+                  {aiError
+                    ? "Summary unavailable. Local insight cards are still active."
+                    : summaryText}
+                </p>
               </section>
 
               <section className="border-t border-[var(--border-subtle)] pt-4">
@@ -182,10 +229,10 @@ export function ReadingInsightsRail({
                   ))}
                   {suggestedActions.map((item) => (
                     <div
-                      key={item}
+                      key={`${item.actionId}-${item.label}-signal`}
                       className="rounded-[6px] border border-transparent px-2.5 py-1 text-[12px] leading-relaxed text-[var(--fg-3)]"
                     >
-                      {item}
+                      {item.label}
                     </div>
                   ))}
                 </div>

@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { validateFunctionApiKey } from "./auth.ts";
 
 type TokenProxyRequest =
   | {
@@ -40,6 +41,16 @@ serve(async (req) => {
   const clientSecret = Deno.env.get("GOOGLE_OAUTH_CLIENT_SECRET")?.trim() || "";
   const configuredRedirectUri =
     Deno.env.get("GOOGLE_OAUTH_REDIRECT_URI")?.trim() || "";
+  const expectedApiKey =
+    Deno.env.get("GOOGLE_OAUTH_PROXY_API_KEY")?.trim() || "";
+
+  const apiKeyValidation = validateFunctionApiKey({
+    apiKeyHeader: req.headers.get("apikey"),
+    expectedApiKey,
+  });
+  if (!apiKeyValidation.ok) {
+    return json(apiKeyValidation.status, { error: apiKeyValidation.error });
+  }
 
   if (!configuredClientId || !clientSecret || !configuredRedirectUri) {
     return json(500, { error: "google_oauth_not_configured" });

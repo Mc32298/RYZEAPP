@@ -278,6 +278,8 @@ export function normalizeAiSummaryResult(rawText: string) {
         summary?: unknown;
         keyPoints?: unknown;
         suggestedActions?: unknown;
+        confidence?: unknown;
+        uncertainty?: unknown;
       };
 
       const summary =
@@ -289,19 +291,73 @@ export function normalizeAiSummaryResult(rawText: string) {
             .filter(Boolean)
             .slice(0, 5)
         : [];
-      const suggestedActions = Array.isArray(parsed.suggestedActions)
+      const suggestedActionsRaw = Array.isArray(parsed.suggestedActions)
         ? parsed.suggestedActions
-            .filter((item): item is string => typeof item === "string")
-            .map((item) => item.trim())
-            .filter(Boolean)
-            .slice(0, 3)
         : [];
+      const suggestedActions = suggestedActionsRaw
+        .map((item) => {
+          if (typeof item === "string") {
+            const trimmed = item.trim();
+            if (!trimmed) return null;
+            return {
+              actionId: "reply",
+              label: trimmed,
+              reason: "",
+              confidence: 0.7,
+              requiresConfirmation: false,
+            };
+          }
+
+          if (!item || typeof item !== "object") return null;
+          const value = item as Record<string, unknown>;
+          const actionId =
+            value.actionId === "reply" ||
+            value.actionId === "remind_3d" ||
+            value.actionId === "remind_7d"
+              ? value.actionId
+              : "reply";
+          const label =
+            typeof value.label === "string" ? value.label.trim() : "";
+          if (!label) return null;
+          const reason =
+            typeof value.reason === "string" ? value.reason.trim() : "";
+          const confidenceValue =
+            typeof value.confidence === "number" && Number.isFinite(value.confidence)
+              ? value.confidence
+              : 0.7;
+          const confidence = Math.max(0, Math.min(1, confidenceValue));
+          const requiresConfirmation = Boolean(value.requiresConfirmation);
+          return {
+            actionId,
+            label,
+            reason,
+            confidence,
+            requiresConfirmation,
+          };
+        })
+        .filter((item): item is {
+          actionId: "reply" | "remind_3d" | "remind_7d";
+          label: string;
+          reason: string;
+          confidence: number;
+          requiresConfirmation: boolean;
+        } => Boolean(item))
+        .slice(0, 3);
+
+      const confidence =
+        typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence)
+          ? Math.max(0, Math.min(1, parsed.confidence))
+          : 0.7;
+      const uncertainty =
+        typeof parsed.uncertainty === "string" ? parsed.uncertainty.trim() : "";
 
       if (summary || keyPoints.length > 0 || suggestedActions.length > 0) {
         return {
           summary,
           keyPoints,
           suggestedActions,
+          confidence,
+          uncertainty,
         };
       }
     } catch {
@@ -312,7 +368,15 @@ export function normalizeAiSummaryResult(rawText: string) {
   return {
     summary: stripMarkdownAndJsonFraming(rawText),
     keyPoints: [] as string[],
-    suggestedActions: [] as string[],
+    suggestedActions: [] as Array<{
+      actionId: "reply" | "remind_3d" | "remind_7d";
+      label: string;
+      reason: string;
+      confidence: number;
+      requiresConfirmation: boolean;
+    }>,
+    confidence: 0.45,
+    uncertainty: "AI output could not be parsed reliably.",
   };
 }
 

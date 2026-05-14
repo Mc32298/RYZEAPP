@@ -29,6 +29,22 @@ interface GraphMessage {
   snoozedUntil?: string;
 }
 
+interface AiSuggestedAction {
+  actionId: "reply" | "remind_3d" | "remind_7d";
+  label: string;
+  reason: string;
+  confidence: number;
+  requiresConfirmation: boolean;
+}
+
+interface AiSummaryResult {
+  summary: string;
+  keyPoints?: string[];
+  suggestedActions?: AiSuggestedAction[];
+  confidence?: number;
+  uncertainty?: string;
+}
+
 declare global {
   interface Window {
     electronAPI: {
@@ -66,7 +82,7 @@ declare global {
         senderEmail: string;
         body: string;
         preview: string;
-      }) => Promise<{ summary: string; keyPoints?: string[]; suggestedActions?: string[] }>;
+      }) => Promise<AiSummaryResult>;
       generateReplyWithAi: (payload: {
         subject: string;
         senderName: string;
@@ -96,6 +112,7 @@ declare global {
         updatedAt: string | null;
         encryptionAvailable: boolean;
       }>;
+      getAiExtractions: (messageId: string, bodyText: string) => Promise<any[]>;
 
       // --- GENERIC MAIL OPERATIONS ---
       syncMail: (accountId: string) => Promise<{ success: boolean }>;

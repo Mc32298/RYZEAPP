@@ -43,3 +43,18 @@ export function getMailboxRefreshFolderIds(
     new Set([sourceFolderId, destinationFolderId].filter(Boolean)),
   );
 }
+
+export function getNextSelectedEmailIdAfterAction(
+  orderedLatestMessageIds: string[],
+  currentId: string,
+) {
+  if (orderedLatestMessageIds.length === 0) return null;
+  const currentIndex = orderedLatestMessageIds.indexOf(currentId);
+  if (currentIndex === -1) return orderedLatestMessageIds[0] || null;
+
+  const nextId = orderedLatestMessageIds[currentIndex + 1];
+  if (nextId) return nextId;
+
+  const previousId = orderedLatestMessageIds[currentIndex - 1];
+  return previousId || null;
+}

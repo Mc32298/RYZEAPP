@@ -12,7 +12,7 @@ import {
   Sparkles,
   type LucideIcon,
 } from "lucide-react";
-import { EmailThread, EmailLabel } from "@/types/email";
+import { EmailThread, EmailLabel, AiExtraction } from "@/types/email";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import DOMPurify from "dompurify";
@@ -30,10 +30,17 @@ import {
   saveStoredInsightsCollapsed,
 } from "./readingInsightsCollapse";
 import {
-  getDefaultExpandedMessageIds,
   getReadingTimelineMessages,
   stripQuotedHtml,
 } from "./threadView";
+import {
+  createInitialReadingPaneViewState,
+  reconcileReadingPaneViewState,
+} from "./readingPaneState";
+import {
+  LOW_CONFIDENCE_THRESHOLD,
+  type AiSuggestedAction,
+} from "./aiSummary";
 import {
   getConversationSenderName,
   renderThreadMessageHtml,
@@ -60,8 +67,8 @@ interface ReadingPaneProps {
   ) => Promise<void>;
   onReplyAll: (message?: EmailThread) => void;
   onForward: (message?: EmailThread) => void;
-  onArchive: (id: string) => void;
-  onDelete: (id: string) => void;
+  onArchive: (id: string) => Promise<void> | void;
+  onDelete: (id: string) => Promise<void> | void;
   showAvatars: boolean;
   currentUserEmail: string;
   currentUserLabel: string;
@@ -71,12 +78,13 @@ interface ReadingPaneProps {
   onToggleLabel: (email: EmailThread, label: EmailLabel) => void;
   onToggleStar: (id: string) => void;
   onMarkUnread: (id: string) => void;
-  onSnooze: (id: string, snoozedUntil?: string) => void;
+  onSnooze: (id: string, snoozedUntil?: string) => Promise<void> | void;
   onDownloadAttachment: (
     messageId: string,
     attachmentId: string,
     filename: string,
   ) => void;
+  onAiExtractionsDetected?: (extractions: any[]) => void;
   isDarkMode: boolean;
   aiSummaryRequestToken?: number;
   isAiDrafting: boolean;
@@ -95,20 +103,23 @@ function ActionButton({
   label,
   shortcut,
   onClick,
+  disabled = false,
   variant = "default",
 }: {
   icon: LucideIcon;
   label: string;
   shortcut?: string;
   onClick?: () => void;
+  disabled?: boolean;
   variant?: "default" | "danger";
 }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       title={`${label}${shortcut ? ` (${shortcut})` : ""}`}
       className={cn(
-        "flex h-7 items-center gap-1.5 rounded-[6px] px-2.5 text-[12px] font-medium transition-colors",
+        "flex h-7 items-center gap-1.5 rounded-[6px] px-2.5 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45",
         variant === "danger"
           ? "text-[var(--fg-1)] hover:bg-[var(--bg-2)] hover:text-[var(--danger-token)]"
           : "text-[var(--fg-1)] hover:bg-[var(--bg-2)] hover:text-[var(--fg-0)]",
@@ -395,22 +406,25 @@ export function ReadingPane({
   const [senderPolicies, setSenderPolicies] = useState(loadSenderTrustPolicies);
   const [aiSummary, setAiSummary] = useState("");
   const [aiKeyPoints, setAiKeyPoints] = useState<string[]>([]);
-  const [aiSuggestedActions, setAiSuggestedActions] = useState<string[]>([]);
+  const [aiSuggestedActions, setAiSuggestedActions] = useState<
+    AiSuggestedAction[]
+  >([]);
+  const [aiConfidence, setAiConfidence] = useState(0.7);
+  const [aiUncertainty, setAiUncertainty] = useState("");
   const [isAiSummarizing, setIsAiSummarizing] = useState(false);
   const [aiError, setAiError] = useState("");
-  const [expandedMessageIds, setExpandedMessageIds] = useState<string[]>([]);
-  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  const [viewState, setViewState] = useState(createInitialReadingPaneViewState);
   const [isAiInsightsCollapsed, setIsAiInsightsCollapsed] = useState(() =>
     loadStoredInsightsCollapsed(
       typeof window === "undefined" ? null : window.localStorage,
     ),
   );
-  const [quotedOpenById, setQuotedOpenById] = useState<
-    Record<string, boolean>
-  >({});
   const [inlineReplyBody, setInlineReplyBody] = useState("");
   const [isInlineReplySending, setIsInlineReplySending] = useState(false);
   const [inlineReplyError, setInlineReplyError] = useState("");
+  const [inFlightAction, setInFlightAction] = useState<
+    null | "archive" | "delete" | "snooze"
+  >(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -426,6 +440,9 @@ export function ReadingPane({
   const conversationMessages =
     threadMessages.length > 0 ? threadMessages : email ? [email] : [];
   const timelineMessages = getReadingTimelineMessages(conversationMessages);
+  const activeMessageId = viewState.activeMessageId;
+  const expandedMessageIds = viewState.expandedMessageIds;
+  const quotedOpenById = viewState.quotedOpenById;
 
   const handleTrustSender = () => {
     if (!senderEmail) return;
@@ -465,19 +482,50 @@ export function ReadingPane({
     setAiSummary("");
     setAiKeyPoints([]);
     setAiSuggestedActions([]);
+    setAiConfidence(0.7);
+    setAiUncertainty("");
     setAiError("");
     setIsAiSummarizing(false);
     setInlineReplyBody("");
     setInlineReplyError("");
+    setInFlightAction(null);
   }, [email?.id]);
 
-  useEffect(() => {
-    const messages = threadMessages.length > 0 ? threadMessages : email ? [email] : [];
-    const defaultExpanded = getDefaultExpandedMessageIds(messages);
+  const runGuardedAction = useCallback(
+    async (
+      action: "archive" | "delete" | "snooze",
+      operation: () => Promise<void> | void,
+    ) => {
+      if (inFlightAction) return;
+      setInFlightAction(action);
+      try {
+        await operation();
+      } finally {
+        setInFlightAction((current) => (current === action ? null : current));
+      }
+    },
+    [inFlightAction],
+  );
 
-    setExpandedMessageIds(defaultExpanded);
-    setActiveMessageId(messages[0]?.id || email?.id || null);
-    setQuotedOpenById({});
+  const handleArchiveClick = useCallback(() => {
+    if (!email?.id) return;
+    void runGuardedAction("archive", () => onArchive(email.id));
+  }, [email?.id, onArchive, runGuardedAction]);
+
+  const handleDeleteClick = useCallback(() => {
+    if (!email?.id) return;
+    void runGuardedAction("delete", () => onDelete(email.id));
+  }, [email?.id, onDelete, runGuardedAction]);
+
+  useEffect(() => {
+    const messages =
+      threadMessages.length > 0 ? threadMessages : email ? [email] : [];
+    setViewState((previous) =>
+      reconcileReadingPaneViewState(previous, {
+        threadAnchorId: email?.id || null,
+        messages,
+      }),
+    );
   }, [email?.id, threadMessages]);
 
   useEffect(() => {
@@ -562,6 +610,44 @@ export function ReadingPane({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  useEffect(() => {
+    const handleThreadNavigation = (event: KeyboardEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key !== "j" && event.key !== "k") return;
+
+      const target = event.target as HTMLElement | null;
+      const isTypingField =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable);
+      if (isTypingField) return;
+      if (timelineMessages.length <= 1) return;
+
+      const currentIndex = timelineMessages.findIndex(
+        (item) => item.id === activeMessageId,
+      );
+      if (currentIndex === -1) return;
+
+      const nextIndex =
+        event.key === "j"
+          ? Math.min(currentIndex + 1, timelineMessages.length - 1)
+          : Math.max(currentIndex - 1, 0);
+      const nextMessage = timelineMessages[nextIndex];
+      if (!nextMessage || nextMessage.id === activeMessageId) return;
+
+      event.preventDefault();
+      setViewState((previous) => ({
+        ...previous,
+        activeMessageId: nextMessage.id,
+      }));
+    };
+
+    window.addEventListener("keydown", handleThreadNavigation);
+    return () => window.removeEventListener("keydown", handleThreadNavigation);
+  }, [activeMessageId, timelineMessages]);
+
   const handleAiSummarize = useCallback(async () => {
     const summaryEmail =
       (threadMessages.find((item) => item.id === activeMessageId) || email) ??
@@ -588,6 +674,10 @@ export function ReadingPane({
       setAiSummary(result.summary);
       setAiKeyPoints(result.keyPoints || []);
       setAiSuggestedActions(result.suggestedActions || []);
+      setAiConfidence(
+        typeof result.confidence === "number" ? result.confidence : 0.7,
+      );
+      setAiUncertainty(result.uncertainty || "");
     } catch (error) {
       console.error("AI summarize failed:", error);
       setAiError(
@@ -609,7 +699,9 @@ export function ReadingPane({
         const remindAt = new Date();
         remindAt.setDate(remindAt.getDate() + 3);
         remindAt.setHours(8, 0, 0, 0);
-        onSnooze(targetMessage.id, remindAt.toISOString());
+        void runGuardedAction("snooze", () =>
+          onSnooze(targetMessage.id, remindAt.toISOString()),
+        );
         return;
       }
 
@@ -617,13 +709,15 @@ export function ReadingPane({
         const remindAt = new Date();
         remindAt.setDate(remindAt.getDate() + 7);
         remindAt.setHours(8, 0, 0, 0);
-        onSnooze(targetMessage.id, remindAt.toISOString());
+        void runGuardedAction("snooze", () =>
+          onSnooze(targetMessage.id, remindAt.toISOString()),
+        );
         return;
       }
 
       onReply(targetMessage);
     },
-    [activeMessageId, email, onReply, onSnooze, threadMessages],
+    [activeMessageId, email, onReply, onSnooze, runGuardedAction, threadMessages],
   );
 
   useEffect(() => {
@@ -655,6 +749,7 @@ export function ReadingPane({
     blockRemoteImages && !loadRemoteImagesForThisEmail && !isTrustedSender;
   const activeMessage =
     conversationMessages.find((item) => item.id === activeMessageId) || email;
+  const canTrustAiActions = aiConfidence >= LOW_CONFIDENCE_THRESHOLD;
   const smartCategory = classifySmartCategory(activeMessage);
   const inlineReplyTargetMessage = getInlineReplyTargetMessage(
     activeMessage,
@@ -711,15 +806,17 @@ export function ReadingPane({
           <div className="mx-1 h-4 w-px bg-[var(--border-0)]" />
           <ActionButton
             icon={Archive}
-            label="Archive"
+            label={inFlightAction === "archive" ? "Archiving..." : "Archive"}
             shortcut="E"
-            onClick={() => onArchive(email.id)}
+            onClick={handleArchiveClick}
+            disabled={Boolean(inFlightAction)}
           />
           <ActionButton
             icon={Trash2}
-            label="Delete"
+            label={inFlightAction === "delete" ? "Deleting..." : "Delete"}
             variant="danger"
-            onClick={() => onDelete(email.id)}
+            onClick={handleDeleteClick}
+            disabled={Boolean(inFlightAction)}
           />
 
           <div className="relative">
@@ -1029,18 +1126,31 @@ export function ReadingPane({
                     visibleHtml={trimmed.visibleHtml}
                     quotedHtml={trimmed.quotedHtml}
                     showQuoted={Boolean(quotedOpenById[message.id])}
-                    onFocus={() => setActiveMessageId(message.id)}
+                    onFocus={() =>
+                      setViewState((previous) => ({
+                        ...previous,
+                        activeMessageId: message.id,
+                      }))
+                    }
                     onToggleExpanded={() =>
-                      setExpandedMessageIds((prev) =>
-                        prev.includes(message.id)
-                          ? prev.filter((id) => id !== message.id)
-                          : [...prev, message.id],
-                      )
+                      setViewState((previous) => ({
+                        ...previous,
+                        expandedMessageIds: previous.expandedMessageIds.includes(
+                          message.id,
+                        )
+                          ? previous.expandedMessageIds.filter(
+                              (id) => id !== message.id,
+                            )
+                          : [...previous.expandedMessageIds, message.id],
+                      }))
                     }
                     onToggleQuoted={() =>
-                      setQuotedOpenById((prev) => ({
-                        ...prev,
-                        [message.id]: !prev[message.id],
+                      setViewState((previous) => ({
+                        ...previous,
+                        quotedOpenById: {
+                          ...previous.quotedOpenById,
+                          [message.id]: !previous.quotedOpenById[message.id],
+                        },
                       }))
                     }
                     onDownloadAttachment={onDownloadAttachment}
@@ -1074,7 +1184,12 @@ export function ReadingPane({
                   }}
                   className="h-24 w-full resize-none rounded-[var(--radius-ryze-md)] border border-[var(--border-0)] bg-[var(--bg-0)] px-3 py-3 text-[14px] leading-relaxed text-[var(--fg-0)] outline-none transition-colors placeholder:text-[var(--fg-3)] focus:border-[var(--ryze-accent)]"
                   placeholder="Type a reply..."
-                  onFocus={() => setActiveMessageId(activeMessage.id)}
+                  onFocus={() =>
+                    setViewState((previous) => ({
+                      ...previous,
+                      activeMessageId: activeMessage.id,
+                    }))
+                  }
                 />
                 {inlineReplyError && (
                   <p className="mt-3 text-[12px] text-[var(--danger-token)]">
@@ -1125,6 +1240,10 @@ export function ReadingPane({
               aiSummary={aiSummary}
               aiKeyPoints={aiKeyPoints}
               aiSuggestedActions={aiSuggestedActions}
+              aiConfidence={aiConfidence}
+              aiUncertainty={aiUncertainty}
+              canTrustAiActions={canTrustAiActions}
+              isActionBusy={inFlightAction === "snooze"}
               aiError={aiError}
               isAiSummarizing={isAiSummarizing}
               isAiDrafting={isAiDrafting}

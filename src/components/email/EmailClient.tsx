@@ -25,6 +25,7 @@ import {
 } from "./replyComposer";
 import {
   applyMovedEmailState,
+  getNextSelectedEmailIdAfterAction,
   getKnownFolderIdForAccount,
   getMailboxRefreshFolderIds,
 } from "./mailboxMutation";
@@ -133,7 +134,7 @@ function loadStoredSettings(): EmailSettings {
     } else if (mergedSettings.themeMode === "linen") {
       mergedSettings.themeMode = "lightGold";
     } else if (mergedSettings.themeMode === "system") {
-      mergedSettings.themeMode = "darkBlue";
+      mergedSettings.themeMode = "appleLight";
     }
 
     return mergedSettings;
@@ -980,6 +981,10 @@ export function EmailClient() {
       new Map(threadRows.map((row) => [row.latestMessage.id, row.messageIds])),
     [threadRows],
   );
+  const threadRowLatestIds = React.useMemo(
+    () => threadRows.map((row) => row.latestMessage.id),
+    [threadRows],
+  );
 
   useEffect(() => {
     setGlobalSearchSelectedIndex(0);
@@ -1499,7 +1504,7 @@ export function EmailClient() {
   const handleDownloadAttachment = useCallback(
     async (messageId: string, attachmentId: string, filename: string) => {
       if (!window.electronAPI?.downloadMicrosoftEmailAttachment) {
-        alert("Download API is not available. Fully restart Electron.");
+        toast.error("Download API is not available. Fully restart Electron.");
         return;
       }
 
@@ -1530,7 +1535,7 @@ export function EmailClient() {
         }
       } catch (error) {
         console.error("Failed to download attachment:", error);
-        alert(
+        toast.error(
           error instanceof Error ? error.message : "Failed to download file.",
         );
       }
@@ -1549,7 +1554,11 @@ export function EmailClient() {
         ),
       );
 
-      if (selectedEmailId === id) setSelectedEmailId(null);
+      if (selectedEmailId === id) {
+        setSelectedEmailId(
+          getNextSelectedEmailIdAfterAction(threadRowLatestIds, id),
+        );
+      }
 
       const unreadAccountId = resolveEmailOwningAccountId({
         email: emailToUpdate,
@@ -1598,6 +1607,7 @@ export function EmailClient() {
     async (id: string, snoozedUntilOverride?: string) => {
       const email = emails.find((item) => item.id === id);
       if (!email || !window.electronAPI?.snoozeEmail) return;
+      const previousSelectedEmailId = selectedEmailId;
 
       const snoozedUntil = snoozedUntilOverride || getDefaultSnoozeUntilIso();
       const accountId = resolveEmailOwningAccountId({
@@ -1616,14 +1626,31 @@ export function EmailClient() {
           messageId: email.messageId,
           snoozedUntil,
         });
+        if (selectedEmailId === id) {
+          setSelectedEmailId(
+            getNextSelectedEmailIdAfterAction(threadRowLatestIds, id),
+          );
+        }
         await fetchLocalAndSetUI();
+        toast.success("Email snoozed");
       } catch (error) {
         console.error("Failed to snooze email:", error);
+        if (selectedEmailId === id) {
+          setSelectedEmailId(previousSelectedEmailId);
+        }
+        toast.error(
+          error instanceof Error ? error.message : "Failed to snooze email.",
+        );
       }
-
-      if (selectedEmailId === id) setSelectedEmailId(null);
     },
-    [currentAccountId, emails, fetchLocalAndSetUI, selectedEmailId, mailFolders],
+    [
+      currentAccountId,
+      emails,
+      fetchLocalAndSetUI,
+      selectedEmailId,
+      mailFolders,
+      threadRowLatestIds,
+    ],
   );
 
   const moveEmailToFolderAndRefresh = useCallback(
@@ -1683,7 +1710,16 @@ export function EmailClient() {
       const emailToArchive = emails.find((email) => email.id === id);
       if (!emailToArchive) return;
       const previousEmails = emails;
-      const accountId = emailToArchive.accountId || currentAccount.id;
+      const previousSelectedEmailId = selectedEmailId;
+      const accountId = resolveEmailOwningAccountId({
+        email: emailToArchive,
+        mailFolders,
+        currentAccountId: currentAccount.id,
+      });
+      if (!accountId) {
+        toast.error("Unable to resolve the account for this email.");
+        return;
+      }
       const destinationFolderId = getKnownFolderIdForAccount(
         mailFolders,
         accountId,
@@ -1698,14 +1734,20 @@ export function EmailClient() {
         ),
       );
 
-      if (selectedEmailId === id) setSelectedEmailId(null);
+      if (selectedEmailId === id) {
+        setSelectedEmailId(
+          getNextSelectedEmailIdAfterAction(threadRowLatestIds, id),
+        );
+      }
 
       try {
         await moveEmailToFolderAndRefresh(emailToArchive, destinationFolderId);
+        toast.success("Email archived");
       } catch (error) {
         console.error("Failed to archive email on server", error);
         setEmails(previousEmails);
-        window.alert(
+        setSelectedEmailId(previousSelectedEmailId);
+        toast.error(
           error instanceof Error ? error.message : "Failed to archive email.",
         );
       }
@@ -1716,6 +1758,7 @@ export function EmailClient() {
       currentAccount.id,
       mailFolders,
       moveEmailToFolderAndRefresh,
+      threadRowLatestIds,
     ],
   );
 
@@ -1724,8 +1767,17 @@ export function EmailClient() {
       const emailToDelete = emails.find((email) => email.id === id);
       if (!emailToDelete) return;
       const previousEmails = emails;
+      const previousSelectedEmailId = selectedEmailId;
 
-      const owningAccountId = emailToDelete.accountId || currentAccount.id;
+      const owningAccountId = resolveEmailOwningAccountId({
+        email: emailToDelete,
+        mailFolders,
+        currentAccountId: currentAccount.id,
+      });
+      if (!owningAccountId) {
+        toast.error("Unable to resolve the account for this email.");
+        return;
+      }
       const destinationFolderId = getKnownFolderIdForAccount(
         mailFolders,
         owningAccountId,
@@ -1740,14 +1792,20 @@ export function EmailClient() {
         ),
       );
 
-      if (selectedEmailId === id) setSelectedEmailId(null);
+      if (selectedEmailId === id) {
+        setSelectedEmailId(
+          getNextSelectedEmailIdAfterAction(threadRowLatestIds, id),
+        );
+      }
 
       try {
         await moveEmailToFolderAndRefresh(emailToDelete, destinationFolderId);
+        toast.success("Email moved to trash");
       } catch (error) {
         console.error("Failed to delete email on server", error);
         setEmails(previousEmails);
-        window.alert(
+        setSelectedEmailId(previousSelectedEmailId);
+        toast.error(
           error instanceof Error ? error.message : "Failed to delete email.",
         );
       }
@@ -1758,6 +1816,7 @@ export function EmailClient() {
       currentAccount.id,
       mailFolders,
       moveEmailToFolderAndRefresh,
+      threadRowLatestIds,
     ],
   );
 
@@ -1867,7 +1926,7 @@ export function EmailClient() {
       } catch (error) {
         console.error("Failed to move email to folder:", error);
         setEmails(previousEmails);
-        window.alert(
+        toast.error(
           error instanceof Error ? error.message : "Failed to move email.",
         );
         return false;
@@ -2140,14 +2199,14 @@ export function EmailClient() {
       };
 
       if (provider === "imap") {
-        window.alert(
+        toast.error(
           "Sending mail is not available for IMAP accounts in this version. Use an Outlook or Gmail account to send, or send from your provider's webmail.",
         );
         return;
       }
 
       if (!window.electronAPI?.sendEmail) {
-        window.alert(
+        toast.error(
           "Send mail is unavailable (desktop bridge missing). Fully quit and restart the app, then try again.",
         );
         return;
@@ -2168,7 +2227,7 @@ export function EmailClient() {
         setDrafts((prev) => [...prev, draft]);
         const detail =
           error instanceof Error ? error.message : "Unknown error.";
-        window.alert(`Failed to send email. The draft was restored.\n\n${detail}`);
+        toast.error(`Failed to send email. The draft was restored. ${detail}`);
       }
     },
     [accounts, currentAccount, drafts],
@@ -2235,41 +2294,11 @@ export function EmailClient() {
             folder.accountId === accountId &&
             folder.wellKnownName?.toLowerCase() === "sentitems",
         )?.id || message.folder;
-      const optimisticReply: EmailThread = {
-        id: `${accountId}:${sentFolderId}:local-reply-${Date.now()}`,
-        accountId,
-        messageId: `local-reply-${Date.now()}`,
-        conversationId: sourceMessage.conversationId || message.conversationId,
-        inReplyTo:
-          sourceMessage.internetMessageId ||
-          sourceMessage.messageId ||
-          message.messageId,
-        sender: {
-          name: composerAccount.name || composerAccount.email,
-          email: composerAccount.email,
-          initials: getInitials(composerAccount.name || composerAccount.email),
-          color: selectProfileColor(composerAccount.email),
-        },
-        subject: buildReplySubject(sourceMessage),
-        preview: bodyText.trim().slice(0, 180),
-        body: buildInlineReplyHtml({
-          bodyText,
-          sourceEmail: sourceMessage,
-          signature: settings.signature,
-        }),
-        timestamp: new Date(),
-        isRead: true,
-        isStarred: false,
-        folder: sentFolderId,
-        folderId: sentFolderId,
-        folderLabel: "Sent",
-        labels: [],
-        threadCount: 1,
-        hasAttachment: false,
-        attachments: [],
-        to: recipientList,
-        cc: [],
-      };
+      const replyHtmlBody = buildInlineReplyHtml({
+        bodyText,
+        sourceEmail: sourceMessage,
+        signature: settings.signature,
+      });
 
       if (provider === "google") {
         if (!window.electronAPI?.sendEmail) {
@@ -2283,7 +2312,7 @@ export function EmailClient() {
           to: recipients,
           cc: "",
           subject: buildReplySubject(sourceMessage),
-          body: optimisticReply.body,
+          body: replyHtmlBody,
         });
       } else {
         if (!window.electronAPI?.replyEmail) {
@@ -2302,7 +2331,6 @@ export function EmailClient() {
         );
       }
 
-      setEmails((prev) => [optimisticReply, ...prev]);
       toast.success("Reply sent");
       await refreshMailboxAfterReply({
         provider: resolveManualSyncProvider(provider),
@@ -2356,7 +2384,7 @@ export function EmailClient() {
       }
 
       if (!window.electronAPI?.createLabel) {
-        window.alert(
+        toast.error(
           "Create label API is not available. Fully restart Electron.",
         );
         return false;
@@ -2366,7 +2394,7 @@ export function EmailClient() {
         currentAccount.provider !== "microsoft" ||
         !currentAccount.id.startsWith("ms-")
       ) {
-        window.alert("Connect a Microsoft account before creating labels.");
+        toast.error("Connect a Microsoft account before creating labels.");
         return false;
       }
 
@@ -2393,7 +2421,7 @@ export function EmailClient() {
         return true;
       } catch (error) {
         console.error("Failed to create label:", error);
-        window.alert(
+        toast.error(
           error instanceof Error ? error.message : "Failed to create label.",
         );
         return false;
@@ -2411,7 +2439,7 @@ export function EmailClient() {
       }
 
       if (!window.electronAPI?.createFolder) {
-        window.alert(
+        toast.error(
           "Create folder API is not available. Fully restart Electron.",
         );
         return false;
@@ -2440,7 +2468,7 @@ export function EmailClient() {
         return true;
       } catch (error) {
         console.error("Failed to create folder:", error);
-        window.alert(
+        toast.error(
           error instanceof Error ? error.message : "Failed to create folder.",
         );
         return false;
@@ -2455,7 +2483,7 @@ export function EmailClient() {
       if (!trimmedName) return false;
 
       if (!window.electronAPI?.renameFolder) {
-        window.alert(
+        toast.error(
           "Rename folder API is not available. Fully restart Electron.",
         );
         return false;
@@ -2477,7 +2505,7 @@ export function EmailClient() {
         return true;
       } catch (error) {
         console.error("Failed to rename folder:", error);
-        window.alert(
+        toast.error(
           error instanceof Error ? error.message : "Failed to rename folder.",
         );
         return false;
@@ -2489,7 +2517,7 @@ export function EmailClient() {
   const handleDeleteFolder = useCallback(
     async (folder: MailFolder) => {
       if (!window.electronAPI?.deleteFolder) {
-        window.alert(
+        toast.error(
           "Delete folder API is not available. Fully restart Electron.",
         );
         return false;
@@ -2518,7 +2546,7 @@ export function EmailClient() {
         return true;
       } catch (error) {
         console.error("Failed to delete folder:", error);
-        window.alert(
+        toast.error(
           error instanceof Error ? error.message : "Failed to delete folder.",
         );
         return false;
@@ -2530,7 +2558,7 @@ export function EmailClient() {
   const handleEmptyFolder = useCallback(
     async (folder: MailFolder) => {
       if (!window.electronAPI?.emptyFolder) {
-        window.alert(
+        toast.error(
           "Empty folder API is not available. Fully restart Electron.",
         );
         return false;
@@ -2551,7 +2579,7 @@ export function EmailClient() {
         return true;
       } catch (error) {
         console.error("Failed to empty folder:", error);
-        window.alert(
+        toast.error(
           error instanceof Error ? error.message : "Failed to empty folder.",
         );
         return false;
@@ -2563,7 +2591,7 @@ export function EmailClient() {
   const handleSetFolderIcon = useCallback(
     async (folder: MailFolder, icon: string) => {
       if (!window.electronAPI?.setFolderIcon) {
-        window.alert(
+        toast.error(
           "Folder icon API is not available. Fully restart Electron.",
         );
         return false;
@@ -2585,7 +2613,7 @@ export function EmailClient() {
         return true;
       } catch (error) {
         console.error("Failed to set folder icon:", error);
-        window.alert(
+        toast.error(
           error instanceof Error ? error.message : "Failed to set folder icon.",
         );
         return false;
@@ -2651,7 +2679,7 @@ export function EmailClient() {
         if (activeLabelId === label.id) setActiveLabelId(null);
       } catch (error) {
         console.error("Failed to delete label:", error);
-        window.alert(
+        toast.error(
           error instanceof Error ? error.message : "Failed to delete label.",
         );
       }
@@ -2695,7 +2723,7 @@ export function EmailClient() {
       } catch (error) {
         console.error("Failed to update email label:", error);
         await fetchLocalAndSetUI();
-        window.alert(
+        toast.error(
           error instanceof Error
             ? error.message
             : "Failed to update email label.",

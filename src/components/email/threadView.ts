@@ -34,6 +34,10 @@ function sharesParticipants(left: EmailThread, right: EmailThread) {
 }
 
 function matchesFallbackThread(selected: EmailThread, candidate: EmailThread) {
+  if (selected.accountId !== candidate.accountId) {
+    return false;
+  }
+
   if (normalizeSubject(selected.subject) !== normalizeSubject(candidate.subject)) {
     return false;
   }
@@ -44,7 +48,7 @@ function matchesFallbackThread(selected: EmailThread, candidate: EmailThread) {
 function buildThreadKey(email: EmailThread) {
   return (
     email.conversationId ||
-    `${normalizeSubject(email.subject)}:${email.sender.email.toLowerCase()}`
+    `${email.accountId}:${normalizeSubject(email.subject)}:${email.sender.email.toLowerCase()}`
   );
 }
 
@@ -90,7 +94,7 @@ export function buildConversationThread(
   return {
     key:
       selected.conversationId ||
-      `${normalizeSubject(selected.subject)}:${selected.sender.email.toLowerCase()}`,
+      `${selected.accountId}:${normalizeSubject(selected.subject)}:${selected.sender.email.toLowerCase()}`,
     messages: deduped,
   };
 }

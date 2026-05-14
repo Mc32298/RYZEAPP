@@ -1,0 +1,4 @@
+project_id = "lhlnvlvbuogamtwmqdgd"
+
+[functions.google-oauth-token]
+verify_jwt = true
