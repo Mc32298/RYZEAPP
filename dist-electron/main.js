@@ -63533,6 +63533,25 @@ const GMAIL_SYSTEM_FOLDERS = [
   { id: "STARRED", displayName: "Starred", wellKnownName: "", depth: 0, path: "Starred" },
   { id: "SPAM", displayName: "Spam", wellKnownName: "junkmail", depth: 0, path: "Spam" }
 ];
+const GMAIL_FOLDER_PRIORITY = [
+  "INBOX",
+  "SENT",
+  "DRAFT",
+  "SPAM",
+  "TRASH",
+  "ARCHIVE"
+];
+function resolvePrimaryFolderId(labelIds, fallbackFolderId) {
+  if (!Array.isArray(labelIds) || labelIds.length === 0) {
+    return fallbackFolderId;
+  }
+  for (const folderId of GMAIL_FOLDER_PRIORITY) {
+    if (labelIds.includes(folderId)) {
+      return folderId;
+    }
+  }
+  return fallbackFolderId;
+}
 function gmailParseHeader(headers2, name2) {
   return headers2.find((h) => h.name.toLowerCase() === name2.toLowerCase())?.value ?? "";
 }
@@ -63593,6 +63612,7 @@ function gmailUpsertMessage(accountId, folderId, msg) {
   const isRead = !(msg.labelIds ?? []).includes("UNREAD") ? 1 : 0;
   const isStarred = (msg.labelIds ?? []).includes("STARRED") ? 1 : 0;
   const body = gmailExtractBody(msg.payload);
+  const resolvedFolderId = resolvePrimaryFolderId(msg.labelIds, folderId);
   db.prepare(`
     INSERT INTO emails (
       id, accountId, folder, subject, bodyPreview, bodyContentType, bodyContent,
@@ -63615,7 +63635,7 @@ function gmailUpsertMessage(accountId, folderId, msg) {
   `).run(
     msg.id,
     accountId,
-    folderId,
+    resolvedFolderId,
     subject,
     snippet2,
     body.content ? body.contentType : "",
@@ -63661,6 +63681,10 @@ const googleTokenFilePath = path.join(
   "google-oauth-tokens.json"
 );
 const tokenRefreshLeadMs = 60 * 1e3;
+const MIME_BOUNDARY = "ryze_mail_boundary";
+function htmlToPlainText(html) {
+  return html.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
 function getGoogleTokenProxyUrl() {
   const rawValue = getGoogleOAuthEnv().tokenProxyUrl;
   if (!rawValue) {
@@ -63826,15 +63850,36 @@ class GmailProvider {
     const cc = optionalString(payload?.cc, "cc", 4096);
     const subject = optionalString(payload?.subject, "subject", 512);
     const body = optionalString(payload?.body, "body", 5e5);
+    const toRecipients = parseRecipients(to).map((recipient) => recipient.emailAddress.address).filter(Boolean);
+    const ccRecipients = parseRecipients(cc).map((recipient) => recipient.emailAddress.address).filter(Boolean);
+    if (toRecipients.length === 0) {
+      throw new Error("At least one valid recipient is required.");
+    }
+    console.info("[GMAIL_SEND] begin", {
+      accountId,
+      toRecipients,
+      ccRecipients,
+      subject: subject || "(No subject)"
+    });
     const accessToken = await this.refreshToken(accountId);
+    const htmlBody = sanitizeOutgoingHtml(body || " ");
+    const textBody = htmlToPlainText(htmlBody) || " ";
     const lines = [
-      `To: ${to}`,
-      ...cc ? [`Cc: ${cc}`] : [],
+      `To: ${toRecipients.join(", ")}`,
+      ...ccRecipients.length > 0 ? [`Cc: ${ccRecipients.join(", ")}`] : [],
       `Subject: ${subject || "(No subject)"}`,
       "MIME-Version: 1.0",
+      `Content-Type: multipart/alternative; boundary="${MIME_BOUNDARY}"`,
+      "",
+      `--${MIME_BOUNDARY}`,
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      textBody,
+      `--${MIME_BOUNDARY}`,
       "Content-Type: text/html; charset=utf-8",
       "",
-      sanitizeOutgoingHtml(body || " ")
+      htmlBody,
+      `--${MIME_BOUNDARY}--`
     ];
     const raw = Buffer.from(lines.join("\r\n")).toString("base64url");
     const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
@@ -63847,9 +63892,22 @@ class GmailProvider {
     });
     if (!response.ok) {
       const err2 = await response.text();
+      console.error("[GMAIL_SEND] failed", {
+        accountId,
+        status: response.status,
+        error: err2
+      });
       throw new Error(`Gmail send failed (${response.status}): ${err2}`);
     }
-    return { success: true };
+    const responseJson = await response.json();
+    console.info("[GMAIL_SEND] success", {
+      accountId,
+      messageId: responseJson.id || "",
+      threadId: responseJson.threadId || "",
+      toRecipients,
+      ccRecipients
+    });
+    return { success: true, gmailMessageId: responseJson.id, gmailThreadId: responseJson.threadId };
   }
   async markAsRead(accountId, messageId) {
     const accessToken = await this.refreshToken(accountId);
@@ -63945,17 +64003,36 @@ class GmailProvider {
     const messageIdHeader = headers2.find((h) => h.name.toLowerCase() === "message-id")?.value || "";
     const references = headers2.find((h) => h.name.toLowerCase() === "references")?.value || "";
     const from = headers2.find((h) => h.name.toLowerCase() === "from")?.value || "";
+    const fromRecipients = parseRecipients(from).map((recipient) => recipient.emailAddress.address).filter(Boolean);
+    if (fromRecipients.length === 0) {
+      throw new Error("Failed to parse original sender address for Gmail reply.");
+    }
+    console.info("[GMAIL_REPLY] begin", {
+      accountId,
+      sourceMessageId: messageId,
+      toRecipients: fromRecipients,
+      replySubject,
+      sourceThreadId: message.threadId || ""
+    });
     const emailLines = [
-      `To: ${from}`,
+      `To: ${fromRecipients.join(", ")}`,
       `Subject: ${replySubject}`,
       `In-Reply-To: ${messageIdHeader}`,
       `References: ${references ? `${references} ` : ""}${messageIdHeader}`,
       "MIME-Version: 1.0",
+      `Content-Type: multipart/alternative; boundary="${MIME_BOUNDARY}"`,
+      "",
+      `--${MIME_BOUNDARY}`,
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      htmlToPlainText(sanitizeOutgoingHtml(comment || " ")) || " ",
+      `--${MIME_BOUNDARY}`,
       "Content-Type: text/html; charset=utf-8",
       "",
-      sanitizeOutgoingHtml(comment || " ")
+      sanitizeOutgoingHtml(comment || " "),
+      `--${MIME_BOUNDARY}--`
     ];
-    const raw = Buffer.from(emailLines.join("\\r\\n")).toString("base64url");
+    const raw = Buffer.from(emailLines.join("\r\n")).toString("base64url");
     const sendResponse = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
       method: "POST",
       headers: {
@@ -63969,12 +64046,26 @@ class GmailProvider {
     });
     if (!sendResponse.ok) {
       const err2 = await sendResponse.text();
+      console.error("[GMAIL_REPLY] failed", {
+        accountId,
+        sourceMessageId: messageId,
+        status: sendResponse.status,
+        error: err2
+      });
       throw new Error(`Gmail reply failed (${sendResponse.status}): ${err2}`);
     }
+    const responseJson = await sendResponse.json();
+    console.info("[GMAIL_REPLY] success", {
+      accountId,
+      sourceMessageId: messageId,
+      sentMessageId: responseJson.id || "",
+      sentThreadId: responseJson.threadId || "",
+      toRecipients: fromRecipients
+    });
   }
   async sync(accountId) {
     const accessToken = await this.refreshToken(accountId);
-    await gmailUpsertFolders(accessToken);
+    gmailUpsertFolders(accountId);
     const labels = ["INBOX", "SENT", "DRAFT", "SPAM", "TRASH", "IMPORTANT", "STARRED"];
     for (const label of labels) {
       await gmailFetchMessagesForLabel(accessToken, accountId, label);

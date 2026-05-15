@@ -4,6 +4,7 @@ import {
   validateAccountId,
   assertString,
   optionalString,
+  parseRecipients,
   sanitizeOutgoingHtml,
 } from "./validation";
 import * as fs from "fs";
@@ -34,6 +35,24 @@ const googleTokenFilePath = path.join(
 );
 
 const tokenRefreshLeadMs = 60 * 1000;
+const MIME_BOUNDARY = "ryze_mail_boundary";
+
+function htmlToPlainText(html: string) {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
 function getGoogleTokenProxyUrl() {
   const rawValue = getGoogleOAuthEnv().tokenProxyUrl;
@@ -265,17 +284,43 @@ export class GmailProvider implements MailProvider {
     const cc = optionalString(payload?.cc, "cc", 4096);
     const subject = optionalString(payload?.subject, "subject", 512);
     const body = optionalString(payload?.body, "body", 500_000);
+    const toRecipients = parseRecipients(to)
+      .map((recipient) => recipient.emailAddress.address)
+      .filter(Boolean);
+    const ccRecipients = parseRecipients(cc)
+      .map((recipient) => recipient.emailAddress.address)
+      .filter(Boolean);
+
+    if (toRecipients.length === 0) {
+      throw new Error("At least one valid recipient is required.");
+    }
+    console.info("[GMAIL_SEND] begin", {
+      accountId,
+      toRecipients,
+      ccRecipients,
+      subject: subject || "(No subject)",
+    });
 
     const accessToken = await this.refreshToken(accountId);
+    const htmlBody = sanitizeOutgoingHtml(body || " ");
+    const textBody = htmlToPlainText(htmlBody) || " ";
 
     const lines: string[] = [
-      `To: ${to}`,
-      ...(cc ? [`Cc: ${cc}`] : []),
+      `To: ${toRecipients.join(", ")}`,
+      ...(ccRecipients.length > 0 ? [`Cc: ${ccRecipients.join(", ")}`] : []),
       `Subject: ${subject || "(No subject)"}`,
       "MIME-Version: 1.0",
+      `Content-Type: multipart/alternative; boundary="${MIME_BOUNDARY}"`,
+      "",
+      `--${MIME_BOUNDARY}`,
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      textBody,
+      `--${MIME_BOUNDARY}`,
       "Content-Type: text/html; charset=utf-8",
       "",
-      sanitizeOutgoingHtml(body || " "),
+      htmlBody,
+      `--${MIME_BOUNDARY}--`,
     ];
 
     const raw = Buffer.from(lines.join("\r\n")).toString("base64url");
@@ -291,10 +336,23 @@ export class GmailProvider implements MailProvider {
 
     if (!response.ok) {
       const err = await response.text();
+      console.error("[GMAIL_SEND] failed", {
+        accountId,
+        status: response.status,
+        error: err,
+      });
       throw new Error(`Gmail send failed (${response.status}): ${err}`);
     }
+    const responseJson = (await response.json()) as { id?: string; threadId?: string };
+    console.info("[GMAIL_SEND] success", {
+      accountId,
+      messageId: responseJson.id || "",
+      threadId: responseJson.threadId || "",
+      toRecipients,
+      ccRecipients,
+    });
 
-    return { success: true };
+    return { success: true, gmailMessageId: responseJson.id, gmailThreadId: responseJson.threadId };
   }
 
   async markAsRead(accountId: string, messageId: string): Promise<void> {
@@ -409,19 +467,40 @@ export class GmailProvider implements MailProvider {
     const messageIdHeader = headers.find(h => h.name.toLowerCase() === "message-id")?.value || "";
     const references = headers.find(h => h.name.toLowerCase() === "references")?.value || "";
     const from = headers.find(h => h.name.toLowerCase() === "from")?.value || "";
+    const fromRecipients = parseRecipients(from)
+      .map((recipient) => recipient.emailAddress.address)
+      .filter(Boolean);
+    if (fromRecipients.length === 0) {
+      throw new Error("Failed to parse original sender address for Gmail reply.");
+    }
+    console.info("[GMAIL_REPLY] begin", {
+      accountId,
+      sourceMessageId: messageId,
+      toRecipients: fromRecipients,
+      replySubject,
+      sourceThreadId: message.threadId || "",
+    });
 
     const emailLines: string[] = [
-      `To: ${from}`,
+      `To: ${fromRecipients.join(", ")}`,
       `Subject: ${replySubject}`,
       `In-Reply-To: ${messageIdHeader}`,
       `References: ${references ? `${references} ` : ""}${messageIdHeader}`,
       "MIME-Version: 1.0",
+      `Content-Type: multipart/alternative; boundary="${MIME_BOUNDARY}"`,
+      "",
+      `--${MIME_BOUNDARY}`,
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      htmlToPlainText(sanitizeOutgoingHtml(comment || " ")) || " ",
+      `--${MIME_BOUNDARY}`,
       "Content-Type: text/html; charset=utf-8",
       "",
       sanitizeOutgoingHtml(comment || " "),
+      `--${MIME_BOUNDARY}--`,
     ];
 
-    const raw = Buffer.from(emailLines.join("\\r\\n")).toString("base64url");
+    const raw = Buffer.from(emailLines.join("\r\n")).toString("base64url");
 
     const sendResponse = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
       method: "POST",
@@ -437,13 +516,27 @@ export class GmailProvider implements MailProvider {
 
     if (!sendResponse.ok) {
       const err = await sendResponse.text();
+      console.error("[GMAIL_REPLY] failed", {
+        accountId,
+        sourceMessageId: messageId,
+        status: sendResponse.status,
+        error: err,
+      });
       throw new Error(`Gmail reply failed (${sendResponse.status}): ${err}`);
     }
+    const responseJson = (await sendResponse.json()) as { id?: string; threadId?: string };
+    console.info("[GMAIL_REPLY] success", {
+      accountId,
+      sourceMessageId: messageId,
+      sentMessageId: responseJson.id || "",
+      sentThreadId: responseJson.threadId || "",
+      toRecipients: fromRecipients,
+    });
   }
 
   async sync(accountId: string): Promise<{ success: boolean }> {
     const accessToken = await this.refreshToken(accountId);
-    await gmailUpsertFolders(accessToken, accountId);
+    gmailUpsertFolders(accountId);
     
     const labels = ["INBOX", "SENT", "DRAFT", "SPAM", "TRASH", "IMPORTANT", "STARRED"];
     for (const label of labels) {

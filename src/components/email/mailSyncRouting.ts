@@ -1,5 +1,7 @@
 import type { Account } from "@/types/email";
 
+const GMAIL_FOLLOW_UP_SYNC_DELAY_MS = 1500;
+
 export function resolveManualSyncProvider(provider: Account["provider"]) {
   if (provider === "google") return "google";
   if (provider === "imap") return "imap";
@@ -7,6 +9,7 @@ export function resolveManualSyncProvider(provider: Account["provider"]) {
 }
 
 export async function refreshMailboxAfterReply({
+  provider,
   accountId,
   syncMail,
   refreshLocalUi,
@@ -21,4 +24,14 @@ export async function refreshMailboxAfterReply({
   }
 
   await refreshLocalUi();
+
+  if (provider === "google" && syncMail) {
+    window.setTimeout(() => {
+      syncMail(accountId)
+        .then(() => refreshLocalUi())
+        .catch((error) => {
+          console.error("Gmail follow-up sync after reply failed:", error);
+        });
+    }, GMAIL_FOLLOW_UP_SYNC_DELAY_MS);
+  }
 }

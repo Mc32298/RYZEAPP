@@ -4,6 +4,7 @@ import type { EmailThread, MailFolder } from "@/types/email";
 import {
   isRoutableAccountId,
   resolveEmailOwningAccountId,
+  resolveInlineReplyAccountId,
   resolveMessageAccountId,
 } from "./mailAccountOwnership";
 
@@ -119,5 +120,23 @@ describe("resolveEmailOwningAccountId", () => {
         currentAccountId: "disconnected",
       }),
     ).toBe("");
+  });
+});
+
+describe("resolveInlineReplyAccountId", () => {
+  it("uses folder ownership when inline reply message account id is disconnected", () => {
+    const email = makeEmail({
+      accountId: "disconnected",
+      folderId: "google-folder",
+      folder: "google-folder",
+    });
+
+    expect(
+      resolveInlineReplyAccountId({
+        email,
+        mailFolders: [makeFolder("google-folder", "google-owner")],
+        currentAccountId: "ms-current",
+      }),
+    ).toBe("google-owner");
   });
 });

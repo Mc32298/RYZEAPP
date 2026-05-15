@@ -50,3 +50,15 @@ export function resolveEmailOwningAccountId({
 
   return "";
 }
+
+export function resolveInlineReplyAccountId({
+  email,
+  mailFolders,
+  currentAccountId,
+}: {
+  email: Pick<EmailThread, "accountId" | "folderId" | "folder">;
+  mailFolders: MailFolder[];
+  currentAccountId?: string | null;
+}) {
+  return resolveEmailOwningAccountId({ email, mailFolders, currentAccountId });
+}

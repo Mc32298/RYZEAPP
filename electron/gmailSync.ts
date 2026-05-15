@@ -22,6 +22,32 @@ export const GMAIL_SYSTEM_FOLDERS = [
   { id: "SPAM",    displayName: "Spam",    wellKnownName: "junkmail",    depth: 0, path: "Spam" },
 ];
 
+const GMAIL_FOLDER_PRIORITY = [
+  "INBOX",
+  "SENT",
+  "DRAFT",
+  "SPAM",
+  "TRASH",
+  "ARCHIVE",
+] as const;
+
+function resolvePrimaryFolderId(
+  labelIds: string[] | undefined,
+  fallbackFolderId: string,
+) {
+  if (!Array.isArray(labelIds) || labelIds.length === 0) {
+    return fallbackFolderId;
+  }
+
+  for (const folderId of GMAIL_FOLDER_PRIORITY) {
+    if (labelIds.includes(folderId)) {
+      return folderId;
+    }
+  }
+
+  return fallbackFolderId;
+}
+
 // =============================================================================
 // GMAIL API — HELPERS
 // =============================================================================
@@ -106,6 +132,7 @@ export function gmailUpsertMessage(accountId: string, folderId: string, msg: Gma
   const isStarred = (msg.labelIds ?? []).includes("STARRED") ? 1 : 0;
 
   const body = gmailExtractBody(msg.payload as GmailMessagePart | undefined);
+  const resolvedFolderId = resolvePrimaryFolderId(msg.labelIds, folderId);
 
   db.prepare(`
     INSERT INTO emails (
@@ -127,7 +154,7 @@ export function gmailUpsertMessage(accountId: string, folderId: string, msg: Gma
       toRecipients       = excluded.toRecipients,
       ccRecipients       = excluded.ccRecipients
   `).run(
-    msg.id, accountId, folderId, subject, snippet,
+    msg.id, accountId, resolvedFolderId, subject, snippet,
     body.content ? body.contentType : "",
     body.content,
     receivedDateTime, isRead, isStarred, fromName, fromAddress, toRecipients, ccRecipients,

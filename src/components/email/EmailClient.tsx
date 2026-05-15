@@ -36,6 +36,7 @@ import {
 } from "./mailSyncRouting";
 import {
   resolveEmailOwningAccountId,
+  resolveInlineReplyAccountId,
   resolveMessageAccountId,
 } from "./mailAccountOwnership";
 import {
@@ -101,6 +102,7 @@ const PROFILE_COLORS = ["#A8C7A2", "#C7AE79", "#8B6F5A", "#7E9181", "#B57865"];
 const SNOOZED_FOLDER_ID = "snoozed";
 const SNOOZED_DUE_TODAY_FOLDER_ID = "snoozed-due-today";
 const SNOOZED_WAITING_FOLDER_ID = "snoozed-waiting";
+const GMAIL_FOLLOW_UP_SYNC_DELAY_MS = 1500;
 
 function getEndOfTodayTimestamp() {
   const now = new Date();
@@ -1986,10 +1988,15 @@ export function EmailClient() {
     ) => {
       const targetEmail = sourceEmail || selectedEmail;
       if (!targetEmail) return;
+      const owningAccountId = resolveEmailOwningAccountId({
+        email: targetEmail,
+        mailFolders,
+        currentAccountId,
+      });
       const composerAccount = resolveComposerAccount(
         accounts,
         currentAccount,
-        targetEmail.accountId,
+        owningAccountId,
       );
 
       const subject = targetEmail.subject.toLowerCase().startsWith("re:")
@@ -2033,7 +2040,15 @@ export function EmailClient() {
         aiHint: tone ? toneHintFor(tone) : undefined,
       });
     },
-    [accounts, currentAccount, handleCompose, selectedEmail, settings.signature],
+    [
+      accounts,
+      currentAccount,
+      currentAccountId,
+      handleCompose,
+      mailFolders,
+      selectedEmail,
+      settings.signature,
+    ],
   );
 
   const handleReply = useCallback((message?: EmailThread) => {
@@ -2087,17 +2102,29 @@ export function EmailClient() {
   const handleForward = useCallback((message?: EmailThread) => {
     const targetEmail = message || selectedEmail;
     if (!targetEmail) return;
+    const owningAccountId = resolveEmailOwningAccountId({
+      email: targetEmail,
+      mailFolders,
+      currentAccountId,
+    });
     const composerAccount = resolveComposerAccount(
       accounts,
       currentAccount,
-      targetEmail.accountId,
+      owningAccountId,
     );
     handleCompose({
       accountId: composerAccount.id,
       provider: composerAccount.provider,
       subject: `Fwd: ${targetEmail.subject}`,
     });
-  }, [accounts, currentAccount, selectedEmail, handleCompose]);
+  }, [
+    accounts,
+    currentAccount,
+    currentAccountId,
+    selectedEmail,
+    handleCompose,
+    mailFolders,
+  ]);
 
   const closeGlobalSearch = useCallback(() => {
     setIsGlobalSearchOpen(false);
@@ -2216,11 +2243,32 @@ export function EmailClient() {
         setDrafts((prev) => prev.filter((d) => d.id !== id));
 
         await window.electronAPI.sendEmail(sendPayload);
+        toast.success("Email sent");
 
-        if (provider === "microsoft") {
-          window.electronAPI?.syncMail?.(accountId).catch(console.error);
-        } else if (provider === "google") {
-          window.electronAPI?.syncMail?.(accountId).catch(console.error);
+        if (provider === "microsoft" || provider === "google") {
+          try {
+            await window.electronAPI?.syncMail?.(accountId);
+            await fetchLocalAndSetUI();
+
+            if (provider === "google" && window.electronAPI?.syncMail) {
+              window.setTimeout(() => {
+                window.electronAPI
+                  .syncMail(accountId)
+                  .then(() => fetchLocalAndSetUI())
+                  .catch((error) => {
+                    console.error(
+                      "Gmail follow-up sync after send failed:",
+                      error,
+                    );
+                  });
+              }, GMAIL_FOLLOW_UP_SYNC_DELAY_MS);
+            }
+          } catch (syncError) {
+            console.error("Send succeeded but mailbox refresh failed:", syncError);
+            const detail =
+              syncError instanceof Error ? syncError.message : "Unknown error.";
+            toast.warning(`Email sent, but mailbox refresh failed. ${detail}`);
+          }
         }
       } catch (error) {
         console.error("Failed to send email:", error);
@@ -2230,7 +2278,7 @@ export function EmailClient() {
         toast.error(`Failed to send email. The draft was restored. ${detail}`);
       }
     },
-    [accounts, currentAccount, drafts],
+    [accounts, currentAccount, drafts, fetchLocalAndSetUI],
   );
 
   useEffect(() => {
@@ -2267,7 +2315,11 @@ export function EmailClient() {
       bodyText: string,
       conversationMessages: EmailThread[],
     ) => {
-      const accountId = message.accountId || currentAccountId;
+      const accountId = resolveInlineReplyAccountId({
+        email: message,
+        mailFolders,
+        currentAccountId,
+      });
       const composerAccount = resolveComposerAccount(
         accounts,
         currentAccount,
